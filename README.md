@@ -40,6 +40,30 @@
 
 자세한 내용은 `docs/google-sheets-connection.md`를 봅니다.
 
+## Amadeus 가격 연동
+
+항공권/호텔 평균가 추정을 위한 Amadeus 연동 뼈대를 추가했습니다.
+
+- Code: `src/amadeus.ts`
+- Example: `src/example-amadeus.ts`
+- Docs: `docs/amadeus-price-integration.md`
+
+필요한 환경변수:
+
+```bash
+AMADEUS_CLIENT_ID="your_api_key"
+AMADEUS_CLIENT_SECRET="your_api_secret"
+AMADEUS_BASE_URL="https://test.api.amadeus.com"
+```
+
+실행 예시:
+
+```bash
+npm run amadeus:example
+```
+
+현재는 실시간 예약이 아니라 가격 샘플을 가져와 `CostProfile`에 반영하는 목적입니다.
+
 ## 첫 MVP 페이지
 
 | 페이지 | 기능 | 우선순위 |
@@ -56,6 +80,7 @@
   mvp-baseline.md
   database-schema.md
   google-sheets-connection.md
+  amadeus-price-integration.md
   next-development-steps.md
 
 /src
@@ -63,9 +88,11 @@
   scoring.ts
   normalization.ts
   google-sheets.ts
+  amadeus.ts
   sample-destinations.ts
   example-run.ts
   example-google-sheets.ts
+  example-amadeus.ts
 
 package.json
 tsconfig.json
@@ -108,9 +135,12 @@ npm install
 npm run typecheck
 npm run example
 npm run sheet:example
+npm run amadeus:example
 ```
 
 `npm run sheet:example`은 Google Sheets DB를 직접 읽어서 샘플 조건 기준의 상위 추천 결과를 출력합니다.
+
+`npm run amadeus:example`은 Amadeus API 키가 있을 때 항공권/호텔 가격 샘플을 조회합니다.
 
 ## 현재 한계
 
@@ -122,10 +152,14 @@ Google Sheets DB에는 도시/공항/기후/소개/시즌/랜드마크 데이터
 - `Style_Scores`
 - `Companion_Scores`
 
+Amadeus 호텔 검색 정확도를 높이려면 `Cities_Base`에 아래 컬럼을 추가하는 것이 좋습니다.
+
+- `iata_city_code`
+- `amadeus_hotel_city_code`
+
 ## 당장 하지 않을 것
 
-- 실시간 항공권 API
-- 실시간 호텔 API
+- 항공권/호텔 예약 결제
 - 커뮤니티
 - 리뷰 시스템
 - 로그인
