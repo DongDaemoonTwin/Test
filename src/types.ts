@@ -51,6 +51,12 @@ export type CostProfile = {
   dailyLocalCostRange?: CostRange;
   currency?: BudgetCurrency;
   note?: string;
+  pricingSource?: "manual_seed" | "amadeus_live" | "amadeus_cached" | "mixed" | string;
+  lastFetchedAt?: string;
+  sampleSize?: {
+    flights?: number;
+    hotels?: number;
+  };
 };
 
 export type StyleScores = Record<StyleTag, number>;
