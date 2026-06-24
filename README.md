@@ -18,6 +18,28 @@
 
 즉, 핵심은 여행 예약이 아니라 여행지 선택 의사결정입니다.
 
+## 연결된 Google Sheets DB
+
+현재 MVP seed DB는 아래 Google Sheets 파일을 기준으로 읽습니다.
+
+- Spreadsheet ID: `1VyIVKXJijMQRJfnRMWXMvcQ0DmRpDDmGPqVKO5Eo8rA`
+- File name: `recommended cities`
+- Loader: `src/google-sheets.ts`
+- Example: `src/example-google-sheets.ts`
+
+사용하는 주요 탭:
+
+- `Cities_Base`
+- `City_Airports`
+- `City_Monthly_Climate`
+- `City_Intros`
+- `City_Seasons`
+- `City_Landmarks`
+
+각 탭은 `city_id` 기준으로 합쳐서 `Destination` 객체로 변환합니다.
+
+자세한 내용은 `docs/google-sheets-connection.md`를 봅니다.
+
 ## 첫 MVP 페이지
 
 | 페이지 | 기능 | 우선순위 |
@@ -33,14 +55,17 @@
 /docs
   mvp-baseline.md
   database-schema.md
+  google-sheets-connection.md
   next-development-steps.md
 
 /src
   types.ts
   scoring.ts
   normalization.ts
+  google-sheets.ts
   sample-destinations.ts
   example-run.ts
+  example-google-sheets.ts
 
 package.json
 tsconfig.json
@@ -82,7 +107,20 @@ score =
 npm install
 npm run typecheck
 npm run example
+npm run sheet:example
 ```
+
+`npm run sheet:example`은 Google Sheets DB를 직접 읽어서 샘플 조건 기준의 상위 추천 결과를 출력합니다.
+
+## 현재 한계
+
+Google Sheets DB에는 도시/공항/기후/소개/시즌/랜드마크 데이터는 있지만, MVP 예산 필터에 필요한 비용 데이터는 아직 부족합니다.
+
+다음 단계에서 추가해야 할 탭:
+
+- `Cost_Profiles`
+- `Style_Scores`
+- `Companion_Scores`
 
 ## 당장 하지 않을 것
 
