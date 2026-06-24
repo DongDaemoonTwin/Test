@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "example": "tsx src/example-run.ts"
+    "example": "tsx src/example-run.ts",
+    "sheet:example": "tsx src/example-google-sheets.ts"
   },
   "devDependencies": {
     "tsx": "latest",
