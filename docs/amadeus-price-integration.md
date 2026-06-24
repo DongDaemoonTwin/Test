@@ -95,7 +95,11 @@ GET /v3/shopping/hotel-offers
 
 응답의 `offers[].price.total` 또는 `offers[].price.base`를 모아 min/max/average/median을 계산합니다.
 
-MVP에서는 `hotelPerNightRange = [min, max]`로 사용합니다.
+중요: Amadeus 호텔 응답 가격은 조회한 날짜 구간의 offer 가격이므로, 추천 엔진의 `hotelPerNightRange`에 넣기 전에 숙박일수로 나눠 1박당 범위로 변환합니다.
+
+```text
+hotelPerNightRange = [offerMin / nights, offerMax / nights]
+```
 
 ## 실행 예시
 
