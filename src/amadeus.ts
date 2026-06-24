@@ -131,6 +131,19 @@ const summarizePrices = (
   };
 };
 
+const countNights = (checkInDate: string, checkOutDate: string): number => {
+  const checkIn = new Date(`${checkInDate}T00:00:00Z`);
+  const checkOut = new Date(`${checkOutDate}T00:00:00Z`);
+  const diffMs = checkOut.getTime() - checkIn.getTime();
+  const nights = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+  return Math.max(1, nights);
+};
+
+const toPerNightRange = (summary: PriceSummary, nights: number): CostRange => {
+  return [Math.round(summary.min / nights), Math.round(summary.max / nights)];
+};
+
 const parseAmadeusError = async (response: Response): Promise<unknown> => {
   try {
     return await response.json();
@@ -337,9 +350,11 @@ export const buildLiveCostProfileFromAmadeus = async (
     config,
   );
 
+  const nights = countNights(input.departureDate, input.returnDate);
+
   return {
     flightCostRangeFromICN: flight ? [flight.min, flight.max] : undefined,
-    hotelPerNightRange: hotel ? [hotel.min, hotel.max] : undefined,
+    hotelPerNightRange: hotel ? toPerNightRange(hotel, nights) : undefined,
     dailyLocalCostRange: input.dailyLocalCostRange,
     currency: input.currencyCode ?? "KRW",
     pricingSource: "amadeus_live",
@@ -349,6 +364,6 @@ export const buildLiveCostProfileFromAmadeus = async (
       hotels: hotel?.sampleSize,
     },
     note:
-      "Live Amadeus search summary. Use as a volatile estimate; cache before using in production recommendations.",
+      "Live Amadeus search summary. Hotel offer totals are normalized to a per-night range before scoring.",
   };
 };
