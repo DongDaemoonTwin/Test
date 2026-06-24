@@ -6,7 +6,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "example": "tsx src/example-run.ts",
-    "sheet:example": "tsx src/example-google-sheets.ts"
+    "sheet:example": "tsx src/example-google-sheets.ts",
+    "amadeus:example": "tsx src/example-amadeus.ts"
   },
   "devDependencies": {
     "tsx": "latest",
