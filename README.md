@@ -54,8 +54,19 @@ Vite 기본 포트는 `5173`입니다. Codespaces에서는 터미널에 뜨는 `
 - `City_Intros`
 - `City_Seasons`
 - `City_Landmarks`
+- `Cost_Profiles`
+- `Style_Scores`
+- `Companion_Scores`
 
 각 탭은 `city_id` 기준으로 합쳐서 `Destination` 객체로 변환합니다.
+
+새로 연결된 세 탭은 아래 객체에 반영됩니다.
+
+- `Cost_Profiles` → `Destination.costProfile`
+- `Style_Scores` → `Destination.styleScores`
+- `Companion_Scores` → `Destination.companionScores`
+
+`Cost_Profiles`, `Style_Scores`, `Companion_Scores`는 optional fallback을 지원합니다. 탭이나 특정 도시 행이 비어 있어도 앱은 기존 추정값/기본값으로 계속 실행됩니다.
 
 ### Google Sheets 접근 방식
 
