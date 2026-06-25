@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "example": "tsx src/example-run.ts",
     "sheet:example": "tsx src/example-google-sheets.ts",
     "amadeus:example": "tsx src/example-amadeus.ts"
@@ -14,6 +16,7 @@
     "@types/node": "latest",
     "tsx": "latest",
     "typescript": "latest",
-    "vite": "latest"
+    "vite": "latest",
+    "vitest": "latest"
   }
 }
