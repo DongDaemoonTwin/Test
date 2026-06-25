@@ -38,9 +38,11 @@ describe("scoring", () => {
     const icnCost = estimateTotalCostRange(fukuoka, { ...baseCondition, departureCity: "ICN" });
     const nrtCost = estimateTotalCostRange(fukuoka, { ...baseCondition, departureCity: "NRT" });
 
+    if (!icnCost || !nrtCost) throw new Error("Expected sample costs to be available.");
+
     expect(getFlightCostRangeForOrigin(fukuoka.costProfile, "NRT")).toEqual([180000, 350000]);
     expect(icnCost).not.toEqual(nrtCost);
-    expect(nrtCost?.[0]).toBeLessThan(icnCost?.[0] ?? 0);
+    expect(nrtCost[0]).toBeLessThan(icnCost[0]);
   });
 
   it("reflects flight time tolerance in the score breakdown", () => {
