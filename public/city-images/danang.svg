@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="Da Nang beach illustration">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#89d8ff"/><stop offset="1" stop-color="#e7faff"/></linearGradient>
+    <linearGradient id="sea" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00b4d8"/><stop offset="1" stop-color="#0077b6"/></linearGradient>
+  </defs>
+  <rect width="1200" height="800" fill="url(#sky)"/>
+  <circle cx="995" cy="126" r="82" fill="#fff3bd"/>
+  <path d="M0 330 C260 250 440 270 660 225 C880 180 1030 175 1200 110 L1200 800 L0 800 Z" fill="url(#sea)"/>
+  <path d="M0 530 C230 470 450 430 650 350 C850 270 1035 250 1200 205 L1200 800 L0 800 Z" fill="#f6d28b"/>
+  <path d="M0 505 C240 442 450 405 650 325 C850 246 1038 230 1200 185" fill="none" stroke="#fff" stroke-width="16" opacity=".86"/>
+  <path d="M0 575 C240 512 450 475 650 395 C850 316 1038 300 1200 255" fill="none" stroke="#fff" stroke-width="9" opacity=".55"/>
+  <g fill="#0f172a"><rect x="720" y="290" width="80" height="270" rx="10"/><rect x="835" y="240" width="95" height="320" rx="10"/><rect x="965" y="315" width="74" height="245" rx="10"/><rect x="1068" y="270" width="90" height="290" rx="10"/></g>
+  <g fill="#fff" opacity=".55"><rect x="742" y="326" width="18" height="18" rx="3"/><rect x="862" y="280" width="18" height="18" rx="3"/><rect x="994" y="350" width="18" height="18" rx="3"/><rect x="1096" y="305" width="18" height="18" rx="3"/></g>
+  <g stroke="#0f766e" stroke-width="12" stroke-linecap="round"><path d="M210 615 L240 530 L270 615"/><path d="M240 530 C205 540 180 565 160 595"/><path d="M240 530 C280 545 305 570 325 600"/><path d="M440 565 L468 490 L498 565"/><path d="M468 490 C430 505 410 530 392 555"/><path d="M468 490 C508 505 530 532 552 560"/></g>
+  <path d="M0 650 C190 630 415 675 625 640 C810 610 960 640 1200 602 L1200 800 L0 800 Z" fill="#fff" opacity=".95"/>
+  <text x="72" y="720" fill="#0f172a" font-family="Arial, sans-serif" font-size="76" font-weight="800">Da Nang</text>
+  <text x="76" y="758" fill="#475569" font-family="Arial, sans-serif" font-size="30" font-weight="600">beach · resort · value destination</text>
+</svg>
