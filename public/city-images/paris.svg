@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="Paris travel illustration">
+  <rect width="1200" height="800" fill="#dbeafe"/>
+  <circle cx="980" cy="130" r="86" fill="#fff7cc"/>
+  <path d="M0 500 C230 430 430 465 620 430 C815 395 1000 420 1200 350 L1200 800 L0 800 Z" fill="#93c5fd"/>
+  <g fill="#1e293b"><rect x="80" y="420" width="140" height="160" rx="12"/><rect x="260" y="380" width="150" height="200" rx="12"/><rect x="800" y="400" width="150" height="180" rx="12"/><rect x="990" y="360" width="145" height="220" rx="12"/></g>
+  <path d="M600 150 L505 585 H695 Z" fill="#0f172a"/>
+  <path d="M555 360 H645 M530 470 H670 M585 240 H615" stroke="#ffffff" stroke-width="20" opacity="0.38"/>
+  <path d="M0 650 C190 620 390 675 620 638 C810 605 965 640 1200 600 L1200 800 L0 800 Z" fill="#ffffff" opacity="0.95"/>
+  <text x="72" y="720" fill="#0f172a" font-family="Arial, sans-serif" font-size="76" font-weight="800">Paris</text>
+  <text x="76" y="758" fill="#475569" font-family="Arial, sans-serif" font-size="30" font-weight="600">culture · art · iconic city break</text>
+</svg>
