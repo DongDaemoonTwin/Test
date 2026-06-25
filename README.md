@@ -38,6 +38,27 @@
 
 각 탭은 `city_id` 기준으로 합쳐서 `Destination` 객체로 변환합니다.
 
+### Google Sheets 접근 방식
+
+`src/google-sheets.ts`는 두 가지 접근 방식을 지원합니다.
+
+```bash
+# 시트가 Anyone with the link can view 상태일 때
+GOOGLE_SHEETS_ACCESS_MODE=public npm run sheet:example
+
+# 시트가 비공개일 때
+GOOGLE_SHEETS_ACCESS_MODE=service_account npm run sheet:example
+```
+
+`401` 에러가 나면 Codespaces에서 시트를 익명으로 읽지 못한다는 뜻입니다. 이 경우 시트를 `Anyone with the link can view`로 바꾸거나, 서비스 계정 환경변수를 설정하고 시트를 서비스 계정 이메일에 공유해야 합니다.
+
+서비스 계정 모드에 필요한 환경변수:
+
+```bash
+GOOGLE_SERVICE_ACCOUNT_EMAIL="your-service-account-email"
+GOOGLE_PRIVATE_KEY="your-private-key-with-newlines-written-as-backslash-n"
+```
+
 자세한 내용은 `docs/google-sheets-connection.md`를 봅니다.
 
 ## Amadeus 가격 연동
@@ -137,32 +158,3 @@ npm run example
 npm run sheet:example
 npm run amadeus:example
 ```
-
-`npm run sheet:example`은 Google Sheets DB를 직접 읽어서 샘플 조건 기준의 상위 추천 결과를 출력합니다.
-
-`npm run amadeus:example`은 Amadeus API 키가 있을 때 항공권/호텔 가격 샘플을 조회합니다.
-
-## 현재 한계
-
-Google Sheets DB에는 도시/공항/기후/소개/시즌/랜드마크 데이터는 있지만, MVP 예산 필터에 필요한 비용 데이터는 아직 부족합니다.
-
-다음 단계에서 추가해야 할 탭:
-
-- `Cost_Profiles`
-- `Style_Scores`
-- `Companion_Scores`
-
-Amadeus 호텔 검색 정확도를 높이려면 `Cities_Base`에 아래 컬럼을 추가하는 것이 좋습니다.
-
-- `iata_city_code`
-- `amadeus_hotel_city_code`
-
-## 당장 하지 않을 것
-
-- 항공권/호텔 예약 결제
-- 커뮤니티
-- 리뷰 시스템
-- 로그인
-- 결제
-
-위 기능들은 MVP 반응을 본 뒤에 붙입니다.
