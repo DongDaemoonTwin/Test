@@ -1,6 +1,13 @@
-import { createSign } from "node:crypto";
-
-import type { BudgetCurrency, CompanionScores, CostProfile, Destination, MonthlyClimate, StyleScores } from "./types";
+import type {
+  BudgetCurrency,
+  CompanionScores,
+  CostProfile,
+  CostRange,
+  Destination,
+  FlightTimeProfile,
+  MonthlyClimate,
+  StyleScores,
+} from "./types";
 
 export const DEFAULT_GOOGLE_SHEET_ID = "1VyIVKXJijMQRJfnRMWXMvcQ0DmRpDDmGPqVKO5Eo8rA";
 
@@ -29,10 +36,15 @@ type ServiceAccountToken = {
   expiresAtMs: number;
 };
 
+type RuntimeProcess = {
+  env?: Record<string, string | undefined>;
+};
+
 let cachedServiceAccountToken: ServiceAccountToken | null = null;
 
 const GOOGLE_SHEETS_READONLY_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const supportedOriginCodes = ["ICN", "GMP", "NRT", "KIX"] as const;
 
 const monthKeys = Array.from({ length: 12 }, (_, index) => {
   const month = index + 1;
@@ -42,7 +54,10 @@ const monthKeys = Array.from({ length: 12 }, (_, index) => {
   };
 });
 
-const env = (key: string): string => process.env[key]?.trim() ?? "";
+const env = (key: string): string => {
+  const runtimeProcess = (globalThis as typeof globalThis & { process?: RuntimeProcess }).process;
+  return runtimeProcess?.env?.[key]?.trim() ?? "";
+};
 
 const googleSheetAccessMode = (options: LoadGoogleSheetOptions): GoogleSheetAccessMode => {
   const value = options.accessMode ?? env("GOOGLE_SHEETS_ACCESS_MODE") ?? "auto";
@@ -162,7 +177,7 @@ const rowsToRecords = (rows: string[][]): SheetRecord[] => {
 
 const base64UrlEncode = (input: string | Buffer): string => Buffer.from(input).toString("base64url");
 
-const createServiceAccountJwt = (): string => {
+const createServiceAccountJwt = async (): Promise<string> => {
   const email = serviceAccountEmail();
   const privateKey = serviceAccountPrivateKey();
 
@@ -172,6 +187,7 @@ const createServiceAccountJwt = (): string => {
     );
   }
 
+  const { createSign } = await import("node:crypto");
   const nowSeconds = Math.floor(Date.now() / 1000);
   const header = {
     alg: "RS256",
@@ -203,7 +219,7 @@ const getServiceAccountAccessToken = async (): Promise<string> => {
     },
     body: new URLSearchParams({
       grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion: createServiceAccountJwt(),
+      assertion: await createServiceAccountJwt(),
     }),
   });
 
@@ -316,34 +332,6 @@ const fetchOptionalGoogleSheetTab = async (
   }
 };
 
-const indexByCityId = (rows: SheetRecord[]): Map<string, SheetRecord> => {
-  const map = new Map<string, SheetRecord>();
-
-  for (const row of rows) {
-    const cityId = text(row.city_id);
-    if (cityId) {
-      map.set(cityId, row);
-    }
-  }
-
-  return map;
-};
-
-const groupByCityId = (rows: SheetRecord[]): Map<string, SheetRecord[]> => {
-  const map = new Map<string, SheetRecord[]>();
-
-  for (const row of rows) {
-    const cityId = text(row.city_id);
-    if (!cityId) continue;
-
-    const currentRows = map.get(cityId) ?? [];
-    currentRows.push(row);
-    map.set(cityId, currentRows);
-  }
-
-  return map;
-};
-
 const text = (value: unknown): string => {
   if (value === null || value === undefined) return "";
   return String(value).trim();
@@ -398,12 +386,33 @@ const pickText = (row: SheetRecord | undefined, keys: string[]): string => {
   return "";
 };
 
+const pickTextFromRows = (rows: Array<SheetRecord | undefined>, keys: string[]): string => {
+  for (const row of rows) {
+    const value = pickText(row, keys);
+    if (value) return value;
+  }
+  return "";
+};
+
 const pickNumber = (row: SheetRecord | undefined, keys: string[]): number | null => {
   const value = pickText(row, keys);
   return value ? numberValue(value) : null;
 };
 
-const pickRange = (row: SheetRecord | undefined, minKeys: string[], maxKeys: string[], avgKeys: string[] = []): [number, number] | undefined => {
+const pickNumberFromRows = (rows: Array<SheetRecord | undefined>, keys: string[]): number | null => {
+  for (const row of rows) {
+    const value = pickNumber(row, keys);
+    if (value !== null) return value;
+  }
+  return null;
+};
+
+const pickRange = (
+  row: SheetRecord | undefined,
+  minKeys: string[],
+  maxKeys: string[],
+  avgKeys: string[] = [],
+): CostRange | undefined => {
   const min = pickNumber(row, minKeys);
   const max = pickNumber(row, maxKeys);
 
@@ -427,6 +436,34 @@ const includesAny = (haystack: string, needles: string[]): boolean => {
   return needles.some((needle) => normalizedHaystack.includes(needle.toLowerCase()));
 };
 
+const indexByCityId = (rows: SheetRecord[]): Map<string, SheetRecord> => {
+  const map = new Map<string, SheetRecord>();
+
+  for (const row of rows) {
+    const cityId = text(row.city_id);
+    if (cityId) {
+      map.set(cityId, row);
+    }
+  }
+
+  return map;
+};
+
+const groupByCityId = (rows: SheetRecord[]): Map<string, SheetRecord[]> => {
+  const map = new Map<string, SheetRecord[]>();
+
+  for (const row of rows) {
+    const cityId = text(row.city_id);
+    if (!cityId) continue;
+
+    const currentRows = map.get(cityId) ?? [];
+    currentRows.push(row);
+    map.set(cityId, currentRows);
+  }
+
+  return map;
+};
+
 const baseStyleScores = (): StyleScores => ({
   budget: 3,
   food: 3,
@@ -443,41 +480,15 @@ const deriveStyleScores = (...texts: string[]): StyleScores => {
   const combinedText = texts.join(" ");
   const scores = baseStyleScores();
 
-  if (includesAny(combinedText, ["가성비", "저렴", "budget", "cheap", "backpacker"])) {
-    scores.budget = 4;
-  }
-
-  if (includesAny(combinedText, ["맛집", "음식", "미식", "food", "cuisine", "restaurant"])) {
-    scores.food = 4;
-  }
-
-  if (includesAny(combinedText, ["쇼핑", "market", "mall", "shopping", "outlet"])) {
-    scores.shopping = 4;
-  }
-
-  if (includesAny(combinedText, ["자연", "해변", "산", "섬", "사파리", "national park", "beach", "nature", "island", "mountain"])) {
-    scores.nature = 4;
-  }
-
-  if (includesAny(combinedText, ["문화", "역사", "박물관", "사원", "성당", "유적", "culture", "history", "museum", "temple", "cathedral"])) {
-    scores.culture = 4;
-  }
-
-  if (includesAny(combinedText, ["액티비티", "트레킹", "다이빙", "스키", "hiking", "trekking", "diving", "ski", "activity"])) {
-    scores.activity = 4;
-  }
-
-  if (includesAny(combinedText, ["휴양", "리조트", "온천", "relax", "resort", "spa", "hot spring"])) {
-    scores.relaxed = 4;
-  }
-
-  if (includesAny(combinedText, ["사진", "야경", "전망", "sns", "photo", "view", "viewpoint", "night view"])) {
-    scores.photo = 4;
-  }
-
-  if (includesAny(combinedText, ["로컬", "현지", "마을", "시장", "local", "village", "old town"])) {
-    scores.localExperience = 4;
-  }
+  if (includesAny(combinedText, ["가성비", "저렴", "budget", "cheap", "backpacker"])) scores.budget = 4;
+  if (includesAny(combinedText, ["맛집", "음식", "미식", "food", "cuisine", "restaurant"])) scores.food = 4;
+  if (includesAny(combinedText, ["쇼핑", "market", "mall", "shopping", "outlet"])) scores.shopping = 4;
+  if (includesAny(combinedText, ["자연", "해변", "산", "섬", "사파리", "national park", "beach", "nature", "island", "mountain"])) scores.nature = 4;
+  if (includesAny(combinedText, ["문화", "역사", "박물관", "사원", "성당", "유적", "culture", "history", "museum", "temple", "cathedral"])) scores.culture = 4;
+  if (includesAny(combinedText, ["액티비티", "트레킹", "다이빙", "스키", "hiking", "trekking", "diving", "ski", "activity"])) scores.activity = 4;
+  if (includesAny(combinedText, ["휴양", "리조트", "온천", "relax", "resort", "spa", "hot spring"])) scores.relaxed = 4;
+  if (includesAny(combinedText, ["사진", "야경", "전망", "sns", "photo", "view", "viewpoint", "night view"])) scores.photo = 4;
+  if (includesAny(combinedText, ["로컬", "현지", "마을", "시장", "local", "village", "old town"])) scores.localExperience = 4;
 
   return Object.fromEntries(
     Object.entries(scores).map(([key, value]) => [key, clampScore(value)]),
@@ -560,6 +571,31 @@ const currencyFromRow = (row: SheetRecord | undefined): BudgetCurrency => {
   return "KRW";
 };
 
+const flightRangeForOrigin = (costRow: SheetRecord | undefined, origin: string): CostRange | undefined => {
+  const lower = origin.toLowerCase();
+  return pickRange(
+    costRow,
+    [
+      `flight_cost_from_${lower}_min_krw`,
+      `${lower}_flight_cost_min_krw`,
+      `${lower}_flight_min_krw`,
+      ...(origin === "ICN" ? ["flight_cost_min_krw"] : []),
+    ],
+    [
+      `flight_cost_from_${lower}_max_krw`,
+      `${lower}_flight_cost_max_krw`,
+      `${lower}_flight_max_krw`,
+      ...(origin === "ICN" ? ["flight_cost_max_krw"] : []),
+    ],
+    [
+      `flight_cost_from_${lower}_avg_krw`,
+      `${lower}_flight_cost_avg_krw`,
+      `${lower}_flight_avg_krw`,
+      ...(origin === "ICN" ? ["flight_cost_avg_krw", "flight_avg_krw"] : []),
+    ],
+  );
+};
+
 const buildCostProfile = (costRow: SheetRecord | undefined): CostProfile => {
   if (!costRow) {
     return {
@@ -568,11 +604,10 @@ const buildCostProfile = (costRow: SheetRecord | undefined): CostProfile => {
     };
   }
 
-  const flightCostRangeFromICN = pickRange(
-    costRow,
-    ["flight_cost_min_krw", "flight_cost_from_icn_min_krw", "icn_flight_cost_min_krw", "icn_flight_min_krw"],
-    ["flight_cost_max_krw", "flight_cost_from_icn_max_krw", "icn_flight_cost_max_krw", "icn_flight_max_krw"],
-    ["flight_cost_avg_krw", "flight_cost_from_icn_avg_krw", "icn_flight_cost_avg_krw", "icn_flight_avg_krw", "flight_avg_krw"],
+  const flightCostRangeByOrigin = Object.fromEntries(
+    supportedOriginCodes
+      .map((origin) => [origin, flightRangeForOrigin(costRow, origin)] as const)
+      .filter((item): item is readonly [string, CostRange] => Boolean(item[1])),
   );
 
   const hotelPerNightRange = pickRange(
@@ -598,7 +633,7 @@ const buildCostProfile = (costRow: SheetRecord | undefined): CostProfile => {
 
   const dailyLocalCostRange =
     directDailyRange && transportRange
-      ? ([directDailyRange[0] + transportRange[0], directDailyRange[1] + transportRange[1]] as [number, number])
+      ? ([directDailyRange[0] + transportRange[0], directDailyRange[1] + transportRange[1]] as CostRange)
       : directDailyRange;
 
   const note = pickText(costRow, ["budget_note", "cost_note", "note", "source_note"]);
@@ -606,13 +641,56 @@ const buildCostProfile = (costRow: SheetRecord | undefined): CostProfile => {
   const lastFetchedAt = pickText(costRow, ["last_fetched_at", "last_updated", "updated_at"]);
 
   return {
-    flightCostRangeFromICN,
+    flightCostRangeFromICN: flightCostRangeByOrigin.ICN,
+    flightCostRangeFromGMP: flightCostRangeByOrigin.GMP,
+    flightCostRangeFromNRT: flightCostRangeByOrigin.NRT,
+    flightCostRangeFromKIX: flightCostRangeByOrigin.KIX,
+    flightCostRangeByOrigin,
     hotelPerNightRange,
     dailyLocalCostRange,
     currency: currencyFromRow(costRow),
     note: note || "Cost profile loaded from Google Sheets Cost_Profiles.",
     pricingSource: pricingSource || "google_sheets",
     lastFetchedAt: lastFetchedAt || undefined,
+  };
+};
+
+const flightTimeForOrigin = (
+  rows: Array<SheetRecord | undefined>,
+  origin: string,
+): number | undefined => {
+  const lower = origin.toLowerCase();
+  const value = pickNumberFromRows(rows, [
+    `flight_time_hours_from_${lower}`,
+    `flight_time_from_${lower}_hours`,
+    `${lower}_flight_time_hours`,
+    `${lower}_flight_hours`,
+    ...(origin === "ICN" ? ["flight_time_hours", "flight_hours"] : []),
+  ]);
+
+  return value ?? undefined;
+};
+
+const buildFlightTimeProfile = (
+  ...rows: Array<SheetRecord | undefined>
+): FlightTimeProfile | undefined => {
+  const flightTimeHoursByOrigin = Object.fromEntries(
+    supportedOriginCodes
+      .map((origin) => [origin, flightTimeForOrigin(rows, origin)] as const)
+      .filter((item): item is readonly [string, number] => typeof item[1] === "number" && Number.isFinite(item[1])),
+  );
+
+  if (Object.keys(flightTimeHoursByOrigin).length === 0) {
+    return undefined;
+  }
+
+  return {
+    flightTimeHoursFromICN: flightTimeHoursByOrigin.ICN,
+    flightTimeHoursFromGMP: flightTimeHoursByOrigin.GMP,
+    flightTimeHoursFromNRT: flightTimeHoursByOrigin.NRT,
+    flightTimeHoursFromKIX: flightTimeHoursByOrigin.KIX,
+    flightTimeHoursByOrigin,
+    note: pickTextFromRows(rows, ["flight_time_note", "route_note"]),
   };
 };
 
@@ -667,9 +745,16 @@ const toDestination = (
     climateByMonth: buildClimateByMonth(relatedRows.climateRow),
 
     costProfile: buildCostProfile(relatedRows.costRow),
+    flightTimeProfile: buildFlightTimeProfile(baseRow, relatedRows.introRow, relatedRows.costRow),
 
     styleScores,
     companionScores,
+    imageUrls: {
+      card: pickTextFromRows([baseRow, relatedRows.introRow], ["card_image_url", "image_url", "image"]),
+      hero: pickTextFromRows([baseRow, relatedRows.introRow], ["hero_image_url", "hero_image"]),
+      alt: `${cityName} destination image`,
+      source: pickTextFromRows([baseRow, relatedRows.introRow], ["image_source", "photo_source"]),
+    },
     landmarks,
 
     dataQuality: {
