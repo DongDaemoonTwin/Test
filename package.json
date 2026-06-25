@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "vite",
     "typecheck": "tsc --noEmit",
     "example": "tsx src/example-run.ts",
     "sheet:example": "tsx src/example-google-sheets.ts",
@@ -12,6 +13,7 @@
   "devDependencies": {
     "@types/node": "latest",
     "tsx": "latest",
-    "typescript": "latest"
+    "typescript": "latest",
+    "vite": "latest"
   }
 }
