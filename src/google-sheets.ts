@@ -1,3 +1,5 @@
+import { createSign } from "node:crypto";
+
 import type { CompanionScores, Destination, MonthlyClimate, StyleScores } from "./types";
 
 export const DEFAULT_GOOGLE_SHEET_ID = "1VyIVKXJijMQRJfnRMWXMvcQ0DmRpDDmGPqVKO5Eo8rA";
@@ -12,10 +14,22 @@ export const GOOGLE_SHEET_TABS = {
 } as const;
 
 type SheetRecord = Record<string, string>;
+type GoogleSheetAccessMode = "auto" | "public" | "service_account";
 
 type LoadGoogleSheetOptions = {
   sheetId?: string;
+  accessMode?: GoogleSheetAccessMode;
 };
+
+type ServiceAccountToken = {
+  accessToken: string;
+  expiresAtMs: number;
+};
+
+let cachedServiceAccountToken: ServiceAccountToken | null = null;
+
+const GOOGLE_SHEETS_READONLY_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
+const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 const monthKeys = Array.from({ length: 12 }, (_, index) => {
   const month = index + 1;
@@ -25,6 +39,29 @@ const monthKeys = Array.from({ length: 12 }, (_, index) => {
   };
 });
 
+const env = (key: string): string => process.env[key]?.trim() ?? "";
+
+const googleSheetAccessMode = (options: LoadGoogleSheetOptions): GoogleSheetAccessMode => {
+  const value = options.accessMode ?? env("GOOGLE_SHEETS_ACCESS_MODE") ?? "auto";
+
+  if (value === "public" || value === "service_account" || value === "auto") {
+    return value;
+  }
+
+  return "auto";
+};
+
+const serviceAccountEmail = (): string =>
+  env("GOOGLE_SERVICE_ACCOUNT_EMAIL") || env("GOOGLE_SHEETS_SERVICE_ACCOUNT_EMAIL");
+
+const serviceAccountPrivateKey = (): string =>
+  (env("GOOGLE_PRIVATE_KEY") || env("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY") || env("GOOGLE_SHEETS_PRIVATE_KEY")).replace(
+    /\\n/g,
+    "\n",
+  );
+
+const hasServiceAccountCredentials = (): boolean => Boolean(serviceAccountEmail() && serviceAccountPrivateKey());
+
 const csvExportUrl = (sheetId: string, sheetName: string): string => {
   const params = new URLSearchParams({
     tqx: "out:csv",
@@ -32,6 +69,16 @@ const csvExportUrl = (sheetId: string, sheetName: string): string => {
   });
 
   return `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?${params.toString()}`;
+};
+
+const sheetsApiValuesUrl = (sheetId: string, sheetName: string): string => {
+  const range = `'${sheetName.replace(/'/g, "''")}'!A:ZZZ`;
+  const params = new URLSearchParams({
+    majorDimension: "ROWS",
+    valueRenderOption: "FORMATTED_VALUE",
+  });
+
+  return `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}?${params.toString()}`;
 };
 
 const parseCsv = (csvText: string): string[][] => {
@@ -110,15 +157,83 @@ const rowsToRecords = (rows: string[][]): SheetRecord[] => {
     .filter((record) => Object.values(record).some(Boolean));
 };
 
-export const fetchGoogleSheetTab = async (
-  sheetName: string,
-  options: LoadGoogleSheetOptions = {},
-): Promise<SheetRecord[]> => {
-  const sheetId = options.sheetId ?? DEFAULT_GOOGLE_SHEET_ID;
+const base64UrlEncode = (input: string | Buffer): string => Buffer.from(input).toString("base64url");
+
+const createServiceAccountJwt = (): string => {
+  const email = serviceAccountEmail();
+  const privateKey = serviceAccountPrivateKey();
+
+  if (!email || !privateKey) {
+    throw new Error(
+      "Google Sheets service account credentials are missing. Set GOOGLE_SERVICE_ACCOUNT_EMAIL and GOOGLE_PRIVATE_KEY.",
+    );
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const header = {
+    alg: "RS256",
+    typ: "JWT",
+  };
+  const claimSet = {
+    iss: email,
+    scope: GOOGLE_SHEETS_READONLY_SCOPE,
+    aud: GOOGLE_OAUTH_TOKEN_URL,
+    iat: nowSeconds,
+    exp: nowSeconds + 3600,
+  };
+
+  const unsignedJwt = `${base64UrlEncode(JSON.stringify(header))}.${base64UrlEncode(JSON.stringify(claimSet))}`;
+  const signature = createSign("RSA-SHA256").update(unsignedJwt).end().sign(privateKey);
+
+  return `${unsignedJwt}.${base64UrlEncode(signature)}`;
+};
+
+const getServiceAccountAccessToken = async (): Promise<string> => {
+  if (cachedServiceAccountToken && cachedServiceAccountToken.expiresAtMs > Date.now() + 60_000) {
+    return cachedServiceAccountToken.accessToken;
+  }
+
+  const response = await fetch(GOOGLE_OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: createServiceAccountJwt(),
+    }),
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | { access_token?: string; expires_in?: number; error?: string; error_description?: string }
+    | null;
+
+  if (!response.ok || !payload?.access_token) {
+    throw new Error(
+      [
+        "Failed to authenticate Google Sheets service account.",
+        `HTTP status: ${response.status}`,
+        payload?.error ? `Error: ${payload.error}` : "",
+        payload?.error_description ? `Description: ${payload.error_description}` : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  }
+
+  cachedServiceAccountToken = {
+    accessToken: payload.access_token,
+    expiresAtMs: Date.now() + (payload.expires_in ?? 3600) * 1000,
+  };
+
+  return cachedServiceAccountToken.accessToken;
+};
+
+const fetchGoogleSheetTabPublic = async (sheetId: string, sheetName: string): Promise<SheetRecord[]> => {
   const response = await fetch(csvExportUrl(sheetId, sheetName));
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch Google Sheet tab ${sheetName}: ${response.status}`);
+    throw new Error(`Failed to fetch public Google Sheet tab ${sheetName}: ${response.status}`);
   }
 
   const csvText = await response.text();
@@ -130,6 +245,60 @@ export const fetchGoogleSheetTab = async (
   }
 
   return rowsToRecords(parseCsv(csvText));
+};
+
+const fetchGoogleSheetTabWithServiceAccount = async (sheetId: string, sheetName: string): Promise<SheetRecord[]> => {
+  const accessToken = await getServiceAccountAccessToken();
+  const response = await fetch(sheetsApiValuesUrl(sheetId, sheetName), {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | { values?: string[][]; error?: { message?: string; status?: string } }
+    | null;
+
+  if (!response.ok || !payload?.values) {
+    throw new Error(
+      [
+        `Failed to fetch Google Sheet tab ${sheetName} through Sheets API.`,
+        `HTTP status: ${response.status}`,
+        payload?.error?.status ? `Status: ${payload.error.status}` : "",
+        payload?.error?.message ? `Message: ${payload.error.message}` : "",
+        "Check that the Google Sheets API is enabled and the spreadsheet is shared with the service account email.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  }
+
+  return rowsToRecords(payload.values);
+};
+
+export const fetchGoogleSheetTab = async (
+  sheetName: string,
+  options: LoadGoogleSheetOptions = {},
+): Promise<SheetRecord[]> => {
+  const sheetId = options.sheetId ?? DEFAULT_GOOGLE_SHEET_ID;
+  const accessMode = googleSheetAccessMode(options);
+
+  if (accessMode === "service_account" || (accessMode === "auto" && hasServiceAccountCredentials())) {
+    return fetchGoogleSheetTabWithServiceAccount(sheetId, sheetName);
+  }
+
+  try {
+    return await fetchGoogleSheetTabPublic(sheetId, sheetName);
+  } catch (error) {
+    throw new Error(
+      [
+        `Failed to fetch Google Sheet tab ${sheetName}.`,
+        error instanceof Error ? error.message : String(error),
+        "For Codespaces, either set the spreadsheet to Anyone with the link can view, or use service account env vars:",
+        "GOOGLE_SHEETS_ACCESS_MODE=service_account, GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY.",
+      ].join(" "),
+    );
+  }
 };
 
 const indexByCityId = (rows: SheetRecord[]): Map<string, SheetRecord> => {
