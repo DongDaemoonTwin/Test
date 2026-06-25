@@ -47,6 +47,10 @@ export type CostRange = [number, number];
 
 export type CostProfile = {
   flightCostRangeFromICN?: CostRange;
+  flightCostRangeFromGMP?: CostRange;
+  flightCostRangeFromNRT?: CostRange;
+  flightCostRangeFromKIX?: CostRange;
+  flightCostRangeByOrigin?: Record<string, CostRange>;
   hotelPerNightRange?: CostRange;
   dailyLocalCostRange?: CostRange;
   currency?: BudgetCurrency;
@@ -57,6 +61,15 @@ export type CostProfile = {
     flights?: number;
     hotels?: number;
   };
+};
+
+export type FlightTimeProfile = {
+  flightTimeHoursFromICN?: number;
+  flightTimeHoursFromGMP?: number;
+  flightTimeHoursFromNRT?: number;
+  flightTimeHoursFromKIX?: number;
+  flightTimeHoursByOrigin?: Record<string, number>;
+  note?: string;
 };
 
 export type StyleScores = Record<StyleTag, number>;
@@ -96,6 +109,8 @@ export type Destination = {
 
   costProfile: CostProfile;
 
+  flightTimeProfile?: FlightTimeProfile;
+
   styleScores: StyleScores;
 
   companionScores: CompanionScores;
@@ -116,6 +131,7 @@ export type DestinationScoreBreakdown = {
   durationFit: number;
   styleFit: number;
   companionFit: number;
+  flightTimeFit: number;
   cautionPenalty: number;
 };
 
