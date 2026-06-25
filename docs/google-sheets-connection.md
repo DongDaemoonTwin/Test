@@ -37,6 +37,63 @@ Example runner:
 npm run sheet:example
 ```
 
+## Access modes
+
+The loader supports two access modes.
+
+### 1. Public CSV mode
+
+This is the simplest mode. It uses Google Sheets CSV export.
+
+Use this when the spreadsheet is set to:
+
+```text
+Share > General access > Anyone with the link > Viewer
+```
+
+Run with:
+
+```bash
+GOOGLE_SHEETS_ACCESS_MODE=public npm run sheet:example
+```
+
+### 2. Service account mode
+
+Use this when the sheet should stay private.
+
+Required steps:
+
+1. Create a Google Cloud service account.
+2. Enable Google Sheets API for the Google Cloud project.
+3. Create a service account key.
+4. Copy the service account email.
+5. Open the spreadsheet and share it with that service account email as Viewer.
+6. Set these environment variables in Codespaces.
+
+```bash
+export GOOGLE_SHEETS_ACCESS_MODE="service_account"
+export GOOGLE_SERVICE_ACCOUNT_EMAIL="your-service-account-email"
+export GOOGLE_PRIVATE_KEY="your-private-key-with-newlines-written-as-backslash-n"
+npm run sheet:example
+```
+
+The private key must keep line breaks. In an environment variable, write line breaks as `\n`. The loader converts `\n` back into real newlines before signing the JWT.
+
+`auto` mode uses service account mode if the service account environment variables exist. Otherwise, it tries public CSV mode.
+
+```bash
+GOOGLE_SHEETS_ACCESS_MODE=auto npm run sheet:example
+```
+
+## Why 401 happens
+
+A 401 from `docs.google.com/spreadsheets/.../gviz/tq` means the script tried to fetch the sheet anonymously but Google did not allow it.
+
+Fix it with one of these:
+
+- Make the spreadsheet viewable by anyone with the link.
+- Or use service account mode and share the spreadsheet with the service account email.
+
 ## Current limitations
 
 The existing Google Sheet does not yet have MVP-ready cost columns for:
@@ -95,7 +152,3 @@ Add these MVP-specific tabs after the current DB structure is stable:
 | `friends` | 1-5 |
 | `family` | 1-5 |
 | `parents` | 1-5 |
-
-## Access note
-
-The loader uses Google Sheets CSV export through the public/shared spreadsheet URL. If the script fails with a CSV permission error, set the spreadsheet sharing permission to `Anyone with the link can view`, or replace the loader with Google Sheets API authentication later.
