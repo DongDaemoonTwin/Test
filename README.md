@@ -18,6 +18,25 @@
 
 즉, 핵심은 여행 예약이 아니라 여행지 선택 의사결정입니다.
 
+## 로컬 웹 프리뷰
+
+Google Sheets나 Amadeus 연결이 없어도 화면 흐름을 먼저 볼 수 있도록 Vite 기반 샘플 웹 UI를 추가했습니다.
+
+- Entry: `index.html`
+- UI script: `src/web-main.ts`
+- Styles: `src/web-styles.css`
+- Data: `src/sample-destinations.ts`
+
+Codespaces 또는 로컬에서 실행:
+
+```bash
+git pull
+npm install
+npm run dev -- --host 0.0.0.0
+```
+
+Vite 기본 포트는 `5173`입니다. Codespaces에서는 터미널에 뜨는 `localhost:5173` 링크를 누르거나, `PORTS` 탭에서 5173 포트를 열면 됩니다.
+
 ## 연결된 Google Sheets DB
 
 현재 MVP seed DB는 아래 Google Sheets 파일을 기준으로 읽습니다.
@@ -111,10 +130,13 @@ npm run amadeus:example
   google-sheets.ts
   amadeus.ts
   sample-destinations.ts
+  web-main.ts
+  web-styles.css
   example-run.ts
   example-google-sheets.ts
   example-amadeus.ts
 
+index.html
 package.json
 tsconfig.json
 ```
@@ -155,6 +177,7 @@ score =
 npm install
 npm run typecheck
 npm run example
+npm run dev -- --host 0.0.0.0
 npm run sheet:example
 npm run amadeus:example
 ```
