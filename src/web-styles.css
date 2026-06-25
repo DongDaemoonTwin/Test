@@ -1,0 +1,161 @@
+:root {
+  color: #111827;
+  background: #f4f6fb;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.shell {
+  width: min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 48px 0 72px;
+}
+
+.hero {
+  padding: 48px;
+  border-radius: 32px;
+  background: linear-gradient(135deg, #ffffff, #eaf0ff);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: #5166e8;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  max-width: 760px;
+  font-size: clamp(34px, 5vw, 64px);
+  line-height: 1.05;
+  letter-spacing: -0.06em;
+}
+
+.hero p:last-child {
+  max-width: 640px;
+  margin: 20px 0 0;
+  color: #4b5563;
+  font-size: 18px;
+  line-height: 1.7;
+}
+
+.summary {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 24px 0;
+  padding: 18px 22px;
+  border-radius: 20px;
+  background: #111827;
+  color: #ffffff;
+}
+
+.summary span {
+  color: #d1d5db;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.card {
+  padding: 24px;
+  border-radius: 26px;
+  background: #ffffff;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+}
+
+.card.good {
+  border-top: 6px solid #22c55e;
+}
+
+.card.borderline {
+  border-top: 6px solid #f59e0b;
+}
+
+.card.difficult {
+  border-top: 6px solid #ef4444;
+}
+
+.topline {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #4b5563;
+  font-size: 14px;
+}
+
+.topline span {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  font-weight: 700;
+}
+
+.card h2 {
+  margin: 18px 0 4px;
+  font-size: 30px;
+  letter-spacing: -0.04em;
+}
+
+.meta {
+  margin: 0;
+  color: #6b7280;
+}
+
+.star {
+  margin: 16px 0;
+  color: #f59e0b;
+  font-size: 22px;
+  letter-spacing: 0.03em;
+}
+
+.cost {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: #f8fafc;
+  font-weight: 700;
+}
+
+.card h3 {
+  margin: 18px 0 8px;
+  font-size: 15px;
+}
+
+.card ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #4b5563;
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .hero {
+    padding: 32px;
+  }
+}
