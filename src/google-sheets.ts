@@ -1,6 +1,6 @@
 import { createSign } from "node:crypto";
 
-import type { CompanionScores, Destination, MonthlyClimate, StyleScores } from "./types";
+import type { BudgetCurrency, CompanionScores, CostProfile, Destination, MonthlyClimate, StyleScores } from "./types";
 
 export const DEFAULT_GOOGLE_SHEET_ID = "1VyIVKXJijMQRJfnRMWXMvcQ0DmRpDDmGPqVKO5Eo8rA";
 
@@ -11,6 +11,9 @@ export const GOOGLE_SHEET_TABS = {
   intros: "City_Intros",
   seasons: "City_Seasons",
   landmarks: "City_Landmarks",
+  costProfiles: "Cost_Profiles",
+  styleScores: "Style_Scores",
+  companionScores: "Companion_Scores",
 } as const;
 
 type SheetRecord = Record<string, string>;
@@ -301,6 +304,18 @@ export const fetchGoogleSheetTab = async (
   }
 };
 
+const fetchOptionalGoogleSheetTab = async (
+  sheetName: string,
+  options: LoadGoogleSheetOptions = {},
+): Promise<SheetRecord[]> => {
+  try {
+    return await fetchGoogleSheetTab(sheetName, options);
+  } catch (error) {
+    console.warn(`Optional Google Sheet tab ${sheetName} could not be loaded. Using fallback values.`, error);
+    return [];
+  }
+};
+
 const indexByCityId = (rows: SheetRecord[]): Map<string, SheetRecord> => {
   const map = new Map<string, SheetRecord>();
 
@@ -334,8 +349,15 @@ const text = (value: unknown): string => {
   return String(value).trim();
 };
 
+const normalizedNumberText = (value: unknown): string =>
+  text(value)
+    .replace(/,/g, "")
+    .replace(/원/g, "")
+    .replace(/krw/gi, "")
+    .trim();
+
 const numberValue = (value: unknown, fallback: number | null = null): number | null => {
-  const parsed = Number(text(value));
+  const parsed = Number(normalizedNumberText(value));
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
@@ -365,7 +387,40 @@ const parseLandmarks = (value: unknown): string[] => {
     .filter(Boolean);
 };
 
+const pickText = (row: SheetRecord | undefined, keys: string[]): string => {
+  if (!row) return "";
+
+  for (const key of keys) {
+    const value = text(row[key]);
+    if (value) return value;
+  }
+
+  return "";
+};
+
+const pickNumber = (row: SheetRecord | undefined, keys: string[]): number | null => {
+  const value = pickText(row, keys);
+  return value ? numberValue(value) : null;
+};
+
+const pickRange = (row: SheetRecord | undefined, minKeys: string[], maxKeys: string[], avgKeys: string[] = []): [number, number] | undefined => {
+  const min = pickNumber(row, minKeys);
+  const max = pickNumber(row, maxKeys);
+
+  if (min !== null && max !== null) return [min, max];
+
+  const average = pickNumber(row, avgKeys);
+  if (average !== null) return [average, average];
+
+  return undefined;
+};
+
 const clampScore = (score: number): number => Math.max(1, Math.min(5, score));
+
+const scoreFromRow = (row: SheetRecord | undefined, keys: string[], fallback: number): number => {
+  const value = pickNumber(row, keys);
+  return clampScore(value ?? fallback);
+};
 
 const includesAny = (haystack: string, needles: string[]): boolean => {
   const normalizedHaystack = haystack.toLowerCase();
@@ -429,6 +484,22 @@ const deriveStyleScores = (...texts: string[]): StyleScores => {
   ) as StyleScores;
 };
 
+const buildStyleScores = (styleRow: SheetRecord | undefined, fallback: StyleScores): StyleScores => {
+  if (!styleRow) return fallback;
+
+  return {
+    budget: scoreFromRow(styleRow, ["budget"], fallback.budget),
+    food: scoreFromRow(styleRow, ["food"], fallback.food),
+    shopping: scoreFromRow(styleRow, ["shopping"], fallback.shopping),
+    nature: scoreFromRow(styleRow, ["nature"], fallback.nature),
+    culture: scoreFromRow(styleRow, ["culture"], fallback.culture),
+    activity: scoreFromRow(styleRow, ["activity", "activities"], fallback.activity),
+    relaxed: scoreFromRow(styleRow, ["relaxed", "relax", "relaxation"], fallback.relaxed),
+    photo: scoreFromRow(styleRow, ["photo", "photo_sns", "sns", "instagram"], fallback.photo),
+    localExperience: scoreFromRow(styleRow, ["local_experience", "localExperience", "local"], fallback.localExperience),
+  };
+};
+
 const deriveCompanionScores = (styleScores: StyleScores, ...texts: string[]): CompanionScores => {
   const combinedText = texts.join(" ");
 
@@ -442,6 +513,18 @@ const deriveCompanionScores = (styleScores: StyleScores, ...texts: string[]): Co
         (styleScores.culture >= 4 || styleScores.relaxed >= 4 ? 1 : 0) -
         (includesAny(combinedText, ["트레킹", "hiking", "diving", "safari"]) ? 1 : 0),
     ),
+  };
+};
+
+const buildCompanionScores = (companionRow: SheetRecord | undefined, fallback: CompanionScores): CompanionScores => {
+  if (!companionRow) return fallback;
+
+  return {
+    solo: scoreFromRow(companionRow, ["solo"], fallback.solo),
+    couple: scoreFromRow(companionRow, ["couple"], fallback.couple),
+    friends: scoreFromRow(companionRow, ["friends", "friend"], fallback.friends),
+    family: scoreFromRow(companionRow, ["family"], fallback.family),
+    parents: scoreFromRow(companionRow, ["parents", "parent"], fallback.parents),
   };
 };
 
@@ -471,6 +554,68 @@ const primaryAirportForCity = (airportRows: SheetRecord[] | undefined, fallbackA
   return text(primaryAirport.airport_code) || fallbackAirport;
 };
 
+const currencyFromRow = (row: SheetRecord | undefined): BudgetCurrency => {
+  const currency = pickText(row, ["currency", "currency_code", "budget_currency"]).toUpperCase();
+  if (currency === "JPY" || currency === "USD") return currency;
+  return "KRW";
+};
+
+const buildCostProfile = (costRow: SheetRecord | undefined): CostProfile => {
+  if (!costRow) {
+    return {
+      currency: "KRW",
+      note: "Cost_Profiles row is missing, so cost feasibility is calculated as a neutral fallback.",
+    };
+  }
+
+  const flightCostRangeFromICN = pickRange(
+    costRow,
+    ["flight_cost_min_krw", "flight_cost_from_icn_min_krw", "icn_flight_cost_min_krw", "icn_flight_min_krw"],
+    ["flight_cost_max_krw", "flight_cost_from_icn_max_krw", "icn_flight_cost_max_krw", "icn_flight_max_krw"],
+    ["flight_cost_avg_krw", "flight_cost_from_icn_avg_krw", "icn_flight_cost_avg_krw", "icn_flight_avg_krw", "flight_avg_krw"],
+  );
+
+  const hotelPerNightRange = pickRange(
+    costRow,
+    ["hotel_per_night_min_krw", "hotel_min_krw", "accommodation_min_krw", "lodging_min_krw"],
+    ["hotel_per_night_max_krw", "hotel_max_krw", "accommodation_max_krw", "lodging_max_krw"],
+    ["hotel_per_night_avg_krw", "hotel_avg_krw", "accommodation_avg_krw", "lodging_avg_krw"],
+  );
+
+  const directDailyRange = pickRange(
+    costRow,
+    ["daily_local_cost_min_krw", "daily_cost_min_krw", "daily_stay_cost_min_krw", "daily_stay_min_krw"],
+    ["daily_local_cost_max_krw", "daily_cost_max_krw", "daily_stay_cost_max_krw", "daily_stay_max_krw"],
+    ["daily_local_cost_avg_krw", "daily_cost_avg_krw", "daily_stay_cost_avg_krw", "daily_stay_avg_krw"],
+  );
+
+  const transportRange = pickRange(
+    costRow,
+    ["local_transport_min_krw", "transport_min_krw"],
+    ["local_transport_max_krw", "transport_max_krw"],
+    ["local_transport_avg_krw", "transport_avg_krw"],
+  );
+
+  const dailyLocalCostRange =
+    directDailyRange && transportRange
+      ? ([directDailyRange[0] + transportRange[0], directDailyRange[1] + transportRange[1]] as [number, number])
+      : directDailyRange;
+
+  const note = pickText(costRow, ["budget_note", "cost_note", "note", "source_note"]);
+  const pricingSource = pickText(costRow, ["pricing_source", "data_status", "source"]);
+  const lastFetchedAt = pickText(costRow, ["last_fetched_at", "last_updated", "updated_at"]);
+
+  return {
+    flightCostRangeFromICN,
+    hotelPerNightRange,
+    dailyLocalCostRange,
+    currency: currencyFromRow(costRow),
+    note: note || "Cost profile loaded from Google Sheets Cost_Profiles.",
+    pricingSource: pricingSource || "google_sheets",
+    lastFetchedAt: lastFetchedAt || undefined,
+  };
+};
+
 const toDestination = (
   baseRow: SheetRecord,
   relatedRows: {
@@ -479,6 +624,9 @@ const toDestination = (
     introRow?: SheetRecord;
     seasonRow?: SheetRecord;
     landmarkRow?: SheetRecord;
+    costRow?: SheetRecord;
+    styleRow?: SheetRecord;
+    companionRow?: SheetRecord;
   },
 ): Destination => {
   const cityId = text(baseRow.city_id);
@@ -489,7 +637,10 @@ const toDestination = (
     `${cityName}은(는) ${country}의 여행 후보 도시입니다.`;
   const keywordsKo = parseKeywordList(relatedRows.introRow?.travel_keywords_ko);
   const landmarks = parseLandmarks(relatedRows.landmarkRow?.landmarks);
-  const styleScores = deriveStyleScores(shortIntroKo, keywordsKo.join(" "), landmarks.join(" "));
+  const derivedStyleScores = deriveStyleScores(shortIntroKo, keywordsKo.join(" "), landmarks.join(" "));
+  const styleScores = buildStyleScores(relatedRows.styleRow, derivedStyleScores);
+  const derivedCompanionScores = deriveCompanionScores(styleScores, shortIntroKo, keywordsKo.join(" "), landmarks.join(" "));
+  const companionScores = buildCompanionScores(relatedRows.companionRow, derivedCompanionScores);
 
   return {
     cityId,
@@ -515,13 +666,10 @@ const toDestination = (
 
     climateByMonth: buildClimateByMonth(relatedRows.climateRow),
 
-    costProfile: {
-      currency: "KRW",
-      note: "Google Sheets seed DB에는 아직 항공권/숙박/체류비 컬럼이 없어 비용 점수는 중립값으로 계산합니다.",
-    },
+    costProfile: buildCostProfile(relatedRows.costRow),
 
     styleScores,
-    companionScores: deriveCompanionScores(styleScores, shortIntroKo, keywordsKo.join(" "), landmarks.join(" ")),
+    companionScores,
     landmarks,
 
     dataQuality: {
@@ -531,7 +679,10 @@ const toDestination = (
         booleanValue(relatedRows.introRow?.needs_review) ||
         booleanValue(relatedRows.seasonRow?.needs_review) ||
         booleanValue(relatedRows.landmarkRow?.needs_review) ||
-        booleanValue(relatedRows.climateRow?.needs_review),
+        booleanValue(relatedRows.climateRow?.needs_review) ||
+        booleanValue(relatedRows.costRow?.needs_review) ||
+        booleanValue(relatedRows.styleRow?.needs_review) ||
+        booleanValue(relatedRows.companionRow?.needs_review),
     },
   };
 };
@@ -539,13 +690,26 @@ const toDestination = (
 export const loadDestinationsFromGoogleSheets = async (
   options: LoadGoogleSheetOptions = {},
 ): Promise<Destination[]> => {
-  const [baseRows, airportRows, climateRows, introRows, seasonRows, landmarkRows] = await Promise.all([
+  const [
+    baseRows,
+    airportRows,
+    climateRows,
+    introRows,
+    seasonRows,
+    landmarkRows,
+    costRows,
+    styleRows,
+    companionRows,
+  ] = await Promise.all([
     fetchGoogleSheetTab(GOOGLE_SHEET_TABS.citiesBase, options),
     fetchGoogleSheetTab(GOOGLE_SHEET_TABS.airports, options),
     fetchGoogleSheetTab(GOOGLE_SHEET_TABS.climate, options),
     fetchGoogleSheetTab(GOOGLE_SHEET_TABS.intros, options),
     fetchGoogleSheetTab(GOOGLE_SHEET_TABS.seasons, options),
     fetchGoogleSheetTab(GOOGLE_SHEET_TABS.landmarks, options),
+    fetchOptionalGoogleSheetTab(GOOGLE_SHEET_TABS.costProfiles, options),
+    fetchOptionalGoogleSheetTab(GOOGLE_SHEET_TABS.styleScores, options),
+    fetchOptionalGoogleSheetTab(GOOGLE_SHEET_TABS.companionScores, options),
   ]);
 
   const airportsByCityId = groupByCityId(airportRows);
@@ -553,6 +717,9 @@ export const loadDestinationsFromGoogleSheets = async (
   const introByCityId = indexByCityId(introRows);
   const seasonByCityId = indexByCityId(seasonRows);
   const landmarkByCityId = indexByCityId(landmarkRows);
+  const costByCityId = indexByCityId(costRows);
+  const styleByCityId = indexByCityId(styleRows);
+  const companionByCityId = indexByCityId(companionRows);
 
   return baseRows
     .filter((baseRow) => text(baseRow.city_id))
@@ -563,6 +730,9 @@ export const loadDestinationsFromGoogleSheets = async (
         introRow: introByCityId.get(text(baseRow.city_id)),
         seasonRow: seasonByCityId.get(text(baseRow.city_id)),
         landmarkRow: landmarkByCityId.get(text(baseRow.city_id)),
+        costRow: costByCityId.get(text(baseRow.city_id)),
+        styleRow: styleByCityId.get(text(baseRow.city_id)),
+        companionRow: companionByCityId.get(text(baseRow.city_id)),
       }),
     );
 };
