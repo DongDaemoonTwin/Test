@@ -63,6 +63,13 @@ export type StyleScores = Record<StyleTag, number>;
 
 export type CompanionScores = Record<CompanionType, number>;
 
+export type DestinationImageUrls = {
+  card?: string;
+  hero?: string;
+  alt?: string;
+  source?: string;
+};
+
 export type Destination = {
   cityId: string;
   cityName: string;
@@ -92,6 +99,8 @@ export type Destination = {
   styleScores: StyleScores;
 
   companionScores: CompanionScores;
+
+  imageUrls?: DestinationImageUrls;
 
   landmarks: string[];
 
