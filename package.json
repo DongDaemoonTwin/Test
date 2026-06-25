@@ -10,6 +10,7 @@
     "amadeus:example": "tsx src/example-amadeus.ts"
   },
   "devDependencies": {
+    "@types/node": "latest",
     "tsx": "latest",
     "typescript": "latest"
   }
