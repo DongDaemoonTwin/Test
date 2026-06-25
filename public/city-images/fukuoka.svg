@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-labelledby="title desc">
+  <title id="title">Fukuoka skyline illustration</title>
+  <desc id="desc">A stylized travel image of Fukuoka with a waterfront skyline and tower.</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#80c7ff"/>
+      <stop offset="0.55" stop-color="#d9efff"/>
+      <stop offset="1" stop-color="#ffe0ad"/>
+    </linearGradient>
+    <linearGradient id="sea" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0096c7"/>
+      <stop offset="1" stop-color="#48cae4"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="800" fill="url(#sky)"/>
+  <circle cx="1010" cy="130" r="86" fill="#fff6d8" opacity="0.9"/>
+  <path d="M0 465 C220 415 335 455 505 430 C720 400 930 440 1200 380 L1200 800 L0 800 Z" fill="url(#sea)"/>
+  <path d="M0 560 C230 515 410 550 610 515 C845 474 1030 520 1200 470 L1200 800 L0 800 Z" fill="#0077b6" opacity="0.5"/>
+  <path d="M0 610 C240 580 420 595 610 570 C825 540 1010 570 1200 540" fill="none" stroke="#ffffff" stroke-width="10" opacity="0.55"/>
+  <g fill="#1f2937">
+    <rect x="90" y="335" width="76" height="210" rx="8"/>
+    <rect x="190" y="295" width="96" height="250" rx="8"/>
+    <rect x="325" y="360" width="72" height="185" rx="8"/>
+    <rect x="435" y="255" width="96" height="290" rx="8"/>
+    <rect x="570" y="330" width="88" height="215" rx="8"/>
+    <rect x="700" y="365" width="92" height="180" rx="8"/>
+  </g>
+  <g fill="#ffffff" opacity="0.55">
+    <rect x="106" y="360" width="16" height="16" rx="3"/><rect x="136" y="360" width="16" height="16" rx="3"/>
+    <rect x="210" y="326" width="18" height="18" rx="3"/><rect x="246" y="326" width="18" height="18" rx="3"/>
+    <rect x="455" y="286" width="18" height="18" rx="3"/><rect x="494" y="286" width="18" height="18" rx="3"/>
+    <rect x="590" y="360" width="18" height="18" rx="3"/><rect x="626" y="360" width="18" height="18" rx="3"/>
+  </g>
+  <g>
+    <rect x="845" y="185" width="72" height="360" rx="28" fill="#0f172a"/>
+    <rect x="872" y="95" width="18" height="105" rx="9" fill="#0f172a"/>
+    <circle cx="881" cy="90" r="12" fill="#ef4444"/>
+    <path d="M855 250 H907 M855 310 H907 M855 370 H907 M855 430 H907" stroke="#ffffff" stroke-width="8" opacity="0.35"/>
+  </g>
+  <path d="M0 650 C200 630 395 675 570 642 C755 606 940 635 1200 600 L1200 800 L0 800 Z" fill="#f8fafc" opacity="0.92"/>
+  <text x="72" y="720" fill="#0f172a" font-family="Arial, sans-serif" font-size="76" font-weight="800">Fukuoka</text>
+  <text x="76" y="758" fill="#475569" font-family="Arial, sans-serif" font-size="30" font-weight="600">short flight · food · easy city break</text>
+</svg>
