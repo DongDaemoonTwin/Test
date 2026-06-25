@@ -1,4 +1,5 @@
 import type {
+  CostProfile,
   CostRange,
   Destination,
   DestinationScoreBreakdown,
@@ -16,12 +17,59 @@ const average = (values: number[]): number => {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 };
 
+const normalizeOriginCode = (origin: string): string => origin.trim().toUpperCase();
+
+const lookupByOrigin = <T>(values: Record<string, T> | undefined, origin: string): T | undefined => {
+  if (!values) return undefined;
+  const originCode = normalizeOriginCode(origin);
+  const exactValue = values[originCode];
+  if (exactValue !== undefined) return exactValue;
+
+  return Object.entries(values).find(([key]) => normalizeOriginCode(key) === originCode)?.[1];
+};
+
+export const getFlightCostRangeForOrigin = (
+  costProfile: CostProfile,
+  departureCity: string,
+): CostRange | undefined => {
+  const originCode = normalizeOriginCode(departureCity);
+  const byOrigin = lookupByOrigin(costProfile.flightCostRangeByOrigin, originCode);
+  if (byOrigin) return byOrigin;
+
+  if (originCode === "ICN") return costProfile.flightCostRangeFromICN;
+  if (originCode === "GMP") return costProfile.flightCostRangeFromGMP;
+  if (originCode === "NRT") return costProfile.flightCostRangeFromNRT;
+  if (originCode === "KIX") return costProfile.flightCostRangeFromKIX;
+
+  return undefined;
+};
+
+export const getFlightTimeHoursForOrigin = (
+  destination: Destination,
+  departureCity: string,
+): number | null => {
+  const originCode = normalizeOriginCode(departureCity);
+  const profile = destination.flightTimeProfile;
+
+  if (!profile) return null;
+
+  const byOrigin = lookupByOrigin(profile.flightTimeHoursByOrigin, originCode);
+  if (typeof byOrigin === "number" && Number.isFinite(byOrigin)) return byOrigin;
+
+  if (originCode === "ICN") return profile.flightTimeHoursFromICN ?? null;
+  if (originCode === "GMP") return profile.flightTimeHoursFromGMP ?? null;
+  if (originCode === "NRT") return profile.flightTimeHoursFromNRT ?? null;
+  if (originCode === "KIX") return profile.flightTimeHoursFromKIX ?? null;
+
+  return null;
+};
+
 export const estimateTotalCostRange = (
   destination: Destination,
   condition: UserTripCondition,
 ): CostRange | null => {
   const { costProfile } = destination;
-  const flight = costProfile.flightCostRangeFromICN;
+  const flight = getFlightCostRangeForOrigin(costProfile, condition.departureCity);
   const hotel = costProfile.hotelPerNightRange;
   const daily = costProfile.dailyLocalCostRange;
 
@@ -113,6 +161,27 @@ export const calculateCompanionFit = (
   return clamp(Math.round((rawScore / 5) * 100), 0, 100);
 };
 
+export const calculateFlightTimeFit = (
+  destination: Destination,
+  condition: UserTripCondition,
+): number => {
+  const toleranceHours = condition.flightTimeToleranceHours;
+  const flightTimeHours = getFlightTimeHoursForOrigin(destination, condition.departureCity);
+
+  if (toleranceHours === null) {
+    return flightTimeHours === null ? 80 : 100;
+  }
+
+  if (flightTimeHours === null) {
+    return 60;
+  }
+
+  if (flightTimeHours <= toleranceHours) return 100;
+  if (flightTimeHours <= toleranceHours + 1.5) return 75;
+  if (flightTimeHours <= toleranceHours + 3) return 45;
+  return 20;
+};
+
 export const calculateCautionPenalty = (
   destination: Destination,
   condition: UserTripCondition,
@@ -150,17 +219,19 @@ export const calculateScoreBreakdown = (
     durationFit: calculateDurationFit(destination, condition),
     styleFit: calculateStyleFit(destination, condition),
     companionFit: calculateCompanionFit(destination, condition),
+    flightTimeFit: calculateFlightTimeFit(destination, condition),
     cautionPenalty: calculateCautionPenalty(destination, condition),
   };
 };
 
 export const calculateFinalScore = (breakdown: DestinationScoreBreakdown): number => {
   const score =
-    breakdown.feasibility * 0.3 +
-    breakdown.seasonAndWeatherFit * 0.25 +
+    breakdown.feasibility * 0.25 +
+    breakdown.seasonAndWeatherFit * 0.2 +
     breakdown.durationFit * 0.15 +
     breakdown.styleFit * 0.2 +
-    breakdown.companionFit * 0.1 -
+    breakdown.companionFit * 0.1 +
+    breakdown.flightTimeFit * 0.1 -
     breakdown.cautionPenalty;
 
   return clamp(Math.round(score), 0, 100);
@@ -180,12 +251,20 @@ export const toBucket = (score: number): "good" | "borderline" | "difficult" => 
   return "difficult";
 };
 
+const formatFlightTime = (hours: number): string => {
+  const wholeHours = Math.floor(hours);
+  const minutes = Math.round((hours - wholeHours) * 60);
+  if (minutes === 0) return `${wholeHours}시간`;
+  return `${wholeHours}시간 ${minutes}분`;
+};
+
 const buildReasons = (
   destination: Destination,
   condition: UserTripCondition,
   breakdown: DestinationScoreBreakdown,
 ): string[] => {
   const reasons: string[] = [];
+  const flightTimeHours = getFlightTimeHoursForOrigin(destination, condition.departureCity);
 
   if (breakdown.feasibility >= 75) {
     reasons.push("예산 범위 안에 들어올 가능성이 높습니다.");
@@ -201,6 +280,10 @@ const buildReasons = (
 
   if (breakdown.companionFit >= 75) {
     reasons.push("동행자 유형에 적합합니다.");
+  }
+
+  if (breakdown.flightTimeFit >= 80 && flightTimeHours !== null) {
+    reasons.push(`비행시간이 약 ${formatFlightTime(flightTimeHours)}로 허용 범위와 맞습니다.`);
   }
 
   if (destination.seasons.bestMonths.includes(condition.travelMonth)) {
@@ -220,6 +303,7 @@ const buildCautions = (
   breakdown: DestinationScoreBreakdown,
 ): string[] => {
   const cautions: string[] = [];
+  const flightTimeHours = getFlightTimeHoursForOrigin(destination, condition.departureCity);
 
   if (breakdown.feasibility < 75) {
     cautions.push("항공권이나 숙소 가격에 따라 예산을 초과할 수 있습니다.");
@@ -227,6 +311,11 @@ const buildCautions = (
 
   if (breakdown.durationFit < 60) {
     cautions.push("현재 여행 기간과는 다소 맞지 않을 수 있습니다.");
+  }
+
+  if (condition.flightTimeToleranceHours !== null && breakdown.flightTimeFit < 75) {
+    const detail = flightTimeHours !== null ? ` 예상 비행시간은 약 ${formatFlightTime(flightTimeHours)}입니다.` : "";
+    cautions.push(`허용 비행시간보다 길 수 있습니다.${detail}`);
   }
 
   if (destination.seasons.cautionMonths.includes(condition.travelMonth)) {
