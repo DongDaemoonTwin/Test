@@ -1,4 +1,5 @@
 import type {
+  BudgetCurrency,
   CostProfile,
   CostRange,
   Destination,
@@ -28,18 +29,52 @@ const lookupByOrigin = <T>(values: Record<string, T> | undefined, origin: string
   return Object.entries(values).find(([key]) => normalizeOriginCode(key) === originCode)?.[1];
 };
 
+const moneyToKrwRate: Record<BudgetCurrency, number> = {
+  KRW: 1,
+  JPY: 9,
+  USD: 1400,
+};
+
+const convertMoney = (value: number, fromCurrency: BudgetCurrency, toCurrency: BudgetCurrency): number => {
+  if (fromCurrency === toCurrency) return value;
+  return (value * moneyToKrwRate[fromCurrency]) / moneyToKrwRate[toCurrency];
+};
+
+const convertMoneyRange = (
+  range: CostRange | undefined,
+  fromCurrency: BudgetCurrency | undefined,
+  toCurrency: BudgetCurrency,
+): CostRange | undefined => {
+  if (!range) return undefined;
+  const sourceCurrency = fromCurrency ?? toCurrency;
+  return [convertMoney(range[0], sourceCurrency, toCurrency), convertMoney(range[1], sourceCurrency, toCurrency)];
+};
+
 export const getFlightCostRangeForOrigin = (
   costProfile: CostProfile,
   departureCity: string,
+  targetCurrency: BudgetCurrency = costProfile.currency ?? "KRW",
 ): CostRange | undefined => {
   const originCode = normalizeOriginCode(departureCity);
   const byOrigin = lookupByOrigin(costProfile.flightCostRangeByOrigin, originCode);
-  if (byOrigin) return byOrigin;
+  const byOriginCurrency = lookupByOrigin(costProfile.flightCostCurrencyByOrigin, originCode);
 
-  if (originCode === "ICN") return costProfile.flightCostRangeFromICN;
-  if (originCode === "GMP") return costProfile.flightCostRangeFromGMP;
-  if (originCode === "NRT") return costProfile.flightCostRangeFromNRT;
-  if (originCode === "KIX") return costProfile.flightCostRangeFromKIX;
+  if (byOrigin) {
+    return convertMoneyRange(byOrigin, byOriginCurrency ?? costProfile.currency ?? targetCurrency, targetCurrency);
+  }
+
+  if (originCode === "ICN") {
+    return convertMoneyRange(costProfile.flightCostRangeFromICN, byOriginCurrency ?? costProfile.currency, targetCurrency);
+  }
+  if (originCode === "GMP") {
+    return convertMoneyRange(costProfile.flightCostRangeFromGMP, byOriginCurrency ?? costProfile.currency, targetCurrency);
+  }
+  if (originCode === "NRT") {
+    return convertMoneyRange(costProfile.flightCostRangeFromNRT, byOriginCurrency ?? costProfile.currency, targetCurrency);
+  }
+  if (originCode === "KIX") {
+    return convertMoneyRange(costProfile.flightCostRangeFromKIX, byOriginCurrency ?? costProfile.currency, targetCurrency);
+  }
 
   return undefined;
 };
@@ -64,14 +99,31 @@ export const getFlightTimeHoursForOrigin = (
   return null;
 };
 
+export const getDirectFlightAvailableForOrigin = (
+  destination: Destination,
+  departureCity: string,
+): boolean | null => {
+  const value = lookupByOrigin(destination.flightTimeProfile?.directFlightAvailableByOrigin, departureCity);
+  return typeof value === "boolean" ? value : null;
+};
+
 export const estimateTotalCostRange = (
   destination: Destination,
   condition: UserTripCondition,
 ): CostRange | null => {
   const { costProfile } = destination;
-  const flight = getFlightCostRangeForOrigin(costProfile, condition.departureCity);
-  const hotel = costProfile.hotelPerNightRange;
-  const daily = costProfile.dailyLocalCostRange;
+  const targetCurrency = condition.budgetCurrency;
+  const flight = getFlightCostRangeForOrigin(costProfile, condition.departureCity, targetCurrency);
+  const hotel = convertMoneyRange(
+    costProfile.hotelPerNightRange,
+    costProfile.hotelPerNightCurrency ?? costProfile.currency,
+    targetCurrency,
+  );
+  const daily = convertMoneyRange(
+    costProfile.dailyLocalCostRange,
+    costProfile.dailyLocalCostCurrency ?? costProfile.currency,
+    targetCurrency,
+  );
 
   if (!flight || !hotel || !daily) {
     return null;
@@ -265,6 +317,7 @@ const buildReasons = (
 ): string[] => {
   const reasons: string[] = [];
   const flightTimeHours = getFlightTimeHoursForOrigin(destination, condition.departureCity);
+  const directFlightAvailable = getDirectFlightAvailableForOrigin(destination, condition.departureCity);
 
   if (breakdown.feasibility >= 75) {
     reasons.push("예산 범위 안에 들어올 가능성이 높습니다.");
@@ -286,6 +339,10 @@ const buildReasons = (
     reasons.push(`비행시간이 약 ${formatFlightTime(flightTimeHours)}로 허용 범위와 맞습니다.`);
   }
 
+  if (directFlightAvailable === true) {
+    reasons.push("선택한 출발지 기준 직항 가능성이 있습니다.");
+  }
+
   if (destination.seasons.bestMonths.includes(condition.travelMonth)) {
     reasons.push("여행 월이 추천 시즌에 해당합니다.");
   }
@@ -304,6 +361,7 @@ const buildCautions = (
 ): string[] => {
   const cautions: string[] = [];
   const flightTimeHours = getFlightTimeHoursForOrigin(destination, condition.departureCity);
+  const directFlightAvailable = getDirectFlightAvailableForOrigin(destination, condition.departureCity);
 
   if (breakdown.feasibility < 75) {
     cautions.push("항공권이나 숙소 가격에 따라 예산을 초과할 수 있습니다.");
@@ -316,6 +374,10 @@ const buildCautions = (
   if (condition.flightTimeToleranceHours !== null && breakdown.flightTimeFit < 75) {
     const detail = flightTimeHours !== null ? ` 예상 비행시간은 약 ${formatFlightTime(flightTimeHours)}입니다.` : "";
     cautions.push(`허용 비행시간보다 길 수 있습니다.${detail}`);
+  }
+
+  if (directFlightAvailable === false) {
+    cautions.push("선택한 출발지 기준 경유가 필요할 수 있습니다.");
   }
 
   if (destination.seasons.cautionMonths.includes(condition.travelMonth)) {
