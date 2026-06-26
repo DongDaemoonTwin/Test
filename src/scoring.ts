@@ -4,6 +4,9 @@ import type {
   CostRange,
   Destination,
   DestinationScoreBreakdown,
+  FitDimension,
+  FitStatus,
+  ResultExplanation,
   ScoredDestination,
   StyleTag,
   UserTripCondition,
@@ -136,8 +139,6 @@ export const estimateTotalCostRange = (
 };
 
 const normalizeBudget = (condition: UserTripCondition): number => {
-  // MVP에서는 total/per_person 변환을 UI 입력 단계에서 처리한다.
-  // 동행자 수를 받기 전까지는 예산 금액을 그대로 사용한다.
   return condition.budgetAmount;
 };
 
@@ -154,8 +155,8 @@ export const calculateFeasibility = (
   const budget = normalizeBudget(condition);
   const [estimatedMin, estimatedMax] = estimatedCostRange;
 
-  if (budget >= estimatedMax) return 100;
-  if (budget >= estimatedMin) return 75;
+  if (budget >= estimatedMax * 0.95) return 100;
+  if (budget >= estimatedMin * 0.9) return 75;
 
   const ratio = budget / estimatedMin;
   return clamp(Math.round(ratio * 70), 0, 70);
@@ -187,6 +188,7 @@ export const calculateDurationFit = (
 
   if (nights === ideal) return 100;
   if (nights >= min && nights <= max) return 80;
+  if (nights === min - 1 || nights === max + 1) return 60;
   if (nights < min) return 45;
   return 60;
 };
@@ -201,7 +203,7 @@ export const calculateStyleFit = (
     return 60;
   }
 
-  const scores = selectedTags.map((tag: StyleTag) => destination.styleScores[tag] ?? 0);
+  const scores = selectedTags.map((tag: StyleTag) => destination.styleScores[tag] ?? 3);
   return clamp(Math.round((average(scores) / 5) * 100), 0, 100);
 };
 
@@ -229,8 +231,8 @@ export const calculateFlightTimeFit = (
   }
 
   if (flightTimeHours <= toleranceHours) return 100;
-  if (flightTimeHours <= toleranceHours + 1.5) return 75;
-  if (flightTimeHours <= toleranceHours + 3) return 45;
+  if (flightTimeHours <= toleranceHours + 2) return 75;
+  if (flightTimeHours <= toleranceHours + 3.5) return 45;
   return 20;
 };
 
@@ -251,11 +253,11 @@ export const calculateCautionPenalty = (
   }
 
   if (destination.dataQuality.needsReview) {
-    penalty += 5;
+    penalty += 3;
   }
 
   if (destination.seasons.cautionMonths.includes(condition.travelMonth)) {
-    penalty += 10;
+    penalty += 8;
   }
 
   return penalty;
@@ -278,12 +280,12 @@ export const calculateScoreBreakdown = (
 
 export const calculateFinalScore = (breakdown: DestinationScoreBreakdown): number => {
   const score =
-    breakdown.feasibility * 0.25 +
-    breakdown.seasonAndWeatherFit * 0.2 +
+    breakdown.feasibility * 0.28 +
+    breakdown.seasonAndWeatherFit * 0.18 +
     breakdown.durationFit * 0.15 +
-    breakdown.styleFit * 0.2 +
-    breakdown.companionFit * 0.1 +
-    breakdown.flightTimeFit * 0.1 -
+    breakdown.styleFit * 0.18 +
+    breakdown.companionFit * 0.09 +
+    breakdown.flightTimeFit * 0.12 -
     breakdown.cautionPenalty;
 
   return clamp(Math.round(score), 0, 100);
@@ -306,89 +308,214 @@ export const toBucket = (score: number): "good" | "borderline" | "difficult" => 
 const formatFlightTime = (hours: number): string => {
   const wholeHours = Math.floor(hours);
   const minutes = Math.round((hours - wholeHours) * 60);
-  if (minutes === 0) return `${wholeHours}시간`;
-  return `${wholeHours}시간 ${minutes}분`;
+  if (minutes === 0) return `${wholeHours}h`;
+  return `${wholeHours}h ${minutes}m`;
 };
 
-const buildReasons = (
+const formatKrw = (value: number): string => `KRW ${Math.round(value).toLocaleString("en-US")}`;
+
+const selectedStyleLabel = (condition: UserTripCondition): string => {
+  if (condition.styleTags.length === 0) return "selected style";
+  return condition.styleTags.map((tag) => tag.replace(/([A-Z])/g, " $1").toLowerCase()).join(" + ");
+};
+
+const statusFromScore = (score: number): FitStatus => {
+  if (score >= 75) return "good";
+  if (score >= 55) return "borderline";
+  return "difficult";
+};
+
+const dimensionText = (dimension: FitDimension): string | undefined => {
+  if (dimension.status === "good") return dimension.goodText;
+  if (dimension.status === "borderline") return dimension.borderlineText;
+  if (dimension.status === "difficult") return dimension.difficultText;
+  return undefined;
+};
+
+const buildDimensions = (
   destination: Destination,
   condition: UserTripCondition,
   breakdown: DestinationScoreBreakdown,
-): string[] => {
-  const reasons: string[] = [];
+  estimatedCostRange: CostRange | null,
+): FitDimension[] => {
+  const budget = normalizeBudget(condition);
   const flightTimeHours = getFlightTimeHoursForOrigin(destination, condition.departureCity);
   const directFlightAvailable = getDirectFlightAvailableForOrigin(destination, condition.departureCity);
+  const { min, max } = destination.recommendedNights;
+  const styleName = selectedStyleLabel(condition);
+  const costValueText = estimatedCostRange
+    ? `${formatKrw(estimatedCostRange[0])}–${formatKrw(estimatedCostRange[1])}`
+    : "Missing estimate";
 
-  if (breakdown.feasibility >= 75) {
-    reasons.push("예산 범위 안에 들어올 가능성이 높습니다.");
-  }
+  const budgetStatus: FitStatus = !estimatedCostRange
+    ? "unknown"
+    : budget >= estimatedCostRange[1] * 0.95
+      ? "good"
+      : budget >= estimatedCostRange[0] * 0.9
+        ? "borderline"
+        : "difficult";
 
-  if (breakdown.durationFit >= 80) {
-    reasons.push(`${condition.nights}박 일정과 잘 맞습니다.`);
-  }
+  const flightStatus: FitStatus =
+    condition.flightTimeToleranceHours === null
+      ? "no_limit"
+      : flightTimeHours === null
+        ? "unknown"
+        : flightTimeHours <= condition.flightTimeToleranceHours
+          ? "good"
+          : flightTimeHours <= condition.flightTimeToleranceHours + 2
+            ? "borderline"
+            : "difficult";
 
-  if (breakdown.styleFit >= 75) {
-    reasons.push("선호하는 여행 스타일과 잘 맞습니다.");
-  }
+  const durationStatus: FitStatus =
+    condition.nights >= min && condition.nights <= max
+      ? "good"
+      : condition.nights === min - 1 || condition.nights === max + 1
+        ? "borderline"
+        : "difficult";
 
-  if (breakdown.companionFit >= 75) {
-    reasons.push("동행자 유형에 적합합니다.");
-  }
+  const seasonStatus: FitStatus = destination.seasons.bestMonths.includes(condition.travelMonth)
+    ? "good"
+    : destination.seasons.cautionMonths.includes(condition.travelMonth)
+      ? "difficult"
+      : "borderline";
 
-  if (breakdown.flightTimeFit >= 80 && flightTimeHours !== null) {
-    reasons.push(`비행시간이 약 ${formatFlightTime(flightTimeHours)}로 허용 범위와 맞습니다.`);
-  }
+  const directStatus: FitStatus = directFlightAvailable === true ? "good" : directFlightAvailable === false ? "difficult" : "unknown";
 
-  if (directFlightAvailable === true) {
-    reasons.push("선택한 출발지 기준 직항 가능성이 있습니다.");
-  }
-
-  if (destination.seasons.bestMonths.includes(condition.travelMonth)) {
-    reasons.push("여행 월이 추천 시즌에 해당합니다.");
-  }
-
-  if (reasons.length === 0) {
-    reasons.push(destination.shortIntroKo);
-  }
-
-  return reasons;
+  return [
+    {
+      key: "budget",
+      label: "Budget",
+      status: budgetStatus,
+      valueText: costValueText,
+      goodText: `Estimated total is likely within your ${formatKrw(budget)} budget.`,
+      borderlineText: `Possible with cheaper flights or stays, but normal prices can exceed ${formatKrw(budget)}.`,
+      difficultText: `Estimated cost is materially above your ${formatKrw(budget)} budget.`,
+    },
+    {
+      key: "flight",
+      label: "Flight time",
+      status: flightStatus,
+      valueText: flightTimeHours === null ? "Unknown" : formatFlightTime(flightTimeHours),
+      goodText: flightTimeHours === null ? undefined : `Flight time is about ${formatFlightTime(flightTimeHours)}, within your tolerance.`,
+      borderlineText: flightTimeHours === null ? undefined : `Flight time is about ${formatFlightTime(flightTimeHours)}, slightly above your comfort range.`,
+      difficultText: flightTimeHours === null ? undefined : `Flight time is about ${formatFlightTime(flightTimeHours)}, too long for this condition.`,
+    },
+    {
+      key: "duration",
+      label: "Trip length",
+      status: durationStatus,
+      valueText: `${condition.nights} nights`,
+      goodText: `${condition.nights} nights fits the recommended ${min}–${max} night range.`,
+      borderlineText: `${condition.nights} nights is close, but not ideal for this destination.`,
+      difficultText: `${condition.nights} nights does not fit the recommended ${min}–${max} night range.`,
+    },
+    {
+      key: "season",
+      label: "Season",
+      status: seasonStatus,
+      valueText: `Month ${condition.travelMonth}`,
+      goodText: `Month ${condition.travelMonth} is one of the better months to visit.`,
+      borderlineText: `Month ${condition.travelMonth} is usable, but not the strongest season.`,
+      difficultText: `Month ${condition.travelMonth} has weather or season risk.`,
+    },
+    {
+      key: "style",
+      label: "Style fit",
+      status: condition.styleTags.length === 0 ? "unknown" : statusFromScore(breakdown.styleFit),
+      valueText: `${breakdown.styleFit}/100`,
+      goodText: `Strong match for ${styleName} travel.`,
+      borderlineText: `Acceptable but not outstanding for ${styleName} travel.`,
+      difficultText: `Weak match for ${styleName} travel.`,
+    },
+    {
+      key: "companion",
+      label: "Companion fit",
+      status: statusFromScore(breakdown.companionFit),
+      valueText: `${breakdown.companionFit}/100`,
+      goodText: `Good fit for ${condition.companionType} travel.`,
+      borderlineText: `Okay, but not especially strong for ${condition.companionType} travel.`,
+      difficultText: `Not a strong fit for ${condition.companionType} travel.`,
+    },
+    {
+      key: "direct",
+      label: "Direct route",
+      status: directStatus,
+      valueText: directFlightAvailable === true ? "Likely direct" : directFlightAvailable === false ? "Transfer likely" : "Needs check",
+      goodText: "Direct-flight availability looks likely from the selected departure airport.",
+      difficultText: "A transfer may be required from the selected departure airport.",
+    },
+  ];
 };
 
-const buildCautions = (
+const buildResultExplanation = (
   destination: Destination,
   condition: UserTripCondition,
   breakdown: DestinationScoreBreakdown,
-): string[] => {
-  const cautions: string[] = [];
-  const flightTimeHours = getFlightTimeHoursForOrigin(destination, condition.departureCity);
-  const directFlightAvailable = getDirectFlightAvailableForOrigin(destination, condition.departureCity);
+  estimatedCostRange: CostRange | null,
+): ResultExplanation => {
+  const dimensions = buildDimensions(destination, condition, breakdown, estimatedCostRange);
+  const goodPoints = dimensions
+    .filter((dimension) => dimension.status === "good" || dimension.status === "no_limit")
+    .map(dimensionText)
+    .filter((value): value is string => Boolean(value));
+  const borderlinePoints = dimensions
+    .filter((dimension) => dimension.status === "borderline")
+    .map(dimensionText)
+    .filter((value): value is string => Boolean(value));
+  const difficultPoints = dimensions
+    .filter((dimension) => dimension.status === "difficult")
+    .map(dimensionText)
+    .filter((value): value is string => Boolean(value));
 
-  if (breakdown.feasibility < 75) {
-    cautions.push("항공권이나 숙소 가격에 따라 예산을 초과할 수 있습니다.");
-  }
+  const missingData = dimensions.filter((dimension) => dimension.status === "unknown").map((dimension) => dimension.label);
+  const confidence = missingData.length > 1 ? "low" : destination.mvp?.visible ? "medium" : "low";
+  const blockingIssue = [
+    missingData.length ? `missing ${missingData.join(", ")}` : "",
+    destination.costProfile.pricingSource?.includes("static") ? "live prices not connected" : "",
+    destination.dataQuality.needsReview ? "seed data needs review" : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
 
-  if (breakdown.durationFit < 60) {
-    cautions.push("현재 여행 기간과는 다소 맞지 않을 수 있습니다.");
-  }
+  const summary =
+    difficultPoints.length > 0
+      ? `${destination.cityName} has real strengths, but ${difficultPoints[0].replace(/\.$/, "").toLowerCase()} under this condition.`
+      : borderlinePoints.length > 0
+        ? `${destination.cityName} is possible, but ${borderlinePoints[0].replace(/\.$/, "").toLowerCase()}.`
+        : `${destination.cityName} is a strong fit for this condition.`;
 
-  if (condition.flightTimeToleranceHours !== null && breakdown.flightTimeFit < 75) {
-    const detail = flightTimeHours !== null ? ` 예상 비행시간은 약 ${formatFlightTime(flightTimeHours)}입니다.` : "";
-    cautions.push(`허용 비행시간보다 길 수 있습니다.${detail}`);
-  }
+  return {
+    goodPoints,
+    borderlinePoints,
+    difficultPoints,
+    dimensions,
+    summary,
+    confidence,
+    blockingIssue,
+  };
+};
 
-  if (directFlightAvailable === false) {
-    cautions.push("선택한 출발지 기준 경유가 필요할 수 있습니다.");
-  }
+const bucketFromExplanation = (score: number, explanation: ResultExplanation): "good" | "borderline" | "difficult" => {
+  const hardBlockers = explanation.dimensions.filter(
+    (dimension) =>
+      dimension.status === "difficult" &&
+      (dimension.key === "budget" || dimension.key === "flight" || dimension.key === "duration"),
+  );
+  const borderlineCount = explanation.dimensions.filter((dimension) => dimension.status === "borderline").length;
 
-  if (destination.seasons.cautionMonths.includes(condition.travelMonth)) {
-    cautions.push("해당 월은 날씨나 성수기 리스크가 있을 수 있습니다.");
-  }
+  if (hardBlockers.length > 0) return "difficult";
+  if (explanation.difficultPoints.length > 0 || borderlineCount >= 2) return "borderline";
+  return toBucket(score);
+};
 
-  if (destination.dataQuality.needsReview) {
-    cautions.push("일부 데이터는 추가 검토가 필요합니다.");
-  }
+const buildReasons = (explanation: ResultExplanation): string[] => {
+  return explanation.goodPoints.length ? explanation.goodPoints : [explanation.summary];
+};
 
-  return cautions;
+const buildCautions = (explanation: ResultExplanation): string[] => {
+  const cautions = [...explanation.borderlinePoints, ...explanation.difficultPoints];
+  if (explanation.blockingIssue) cautions.push(explanation.blockingIssue);
+  return cautions.length ? cautions : ["No major caution in the current data."];
 };
 
 export const scoreDestination = (
@@ -397,16 +524,19 @@ export const scoreDestination = (
 ): ScoredDestination => {
   const breakdown = calculateScoreBreakdown(destination, condition);
   const score = calculateFinalScore(breakdown);
+  const estimatedCostRange = estimateTotalCostRange(destination, condition);
+  const explanation = buildResultExplanation(destination, condition, breakdown, estimatedCostRange);
 
   return {
     destination,
     score,
     starRating: toStarRating(score),
-    bucket: toBucket(score),
-    reasons: buildReasons(destination, condition, breakdown),
-    cautions: buildCautions(destination, condition, breakdown),
-    estimatedCostRange: estimateTotalCostRange(destination, condition),
+    bucket: bucketFromExplanation(score, explanation),
+    reasons: buildReasons(explanation),
+    cautions: buildCautions(explanation),
+    estimatedCostRange,
     breakdown,
+    explanation,
   };
 };
 

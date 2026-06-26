@@ -2,13 +2,13 @@ import "./platform-styles.css";
 
 import { loadDestinationsFromGoogleSheets } from "./google-sheets";
 import { sampleDestinations } from "./sample-destinations";
+import { applyV2SheetOverrides } from "./sheets-v2-overrides";
 import {
   getFlightCostRangeForOrigin,
   getFlightTimeHoursForOrigin,
-  scoreDestination,
   scoreDestinations,
 } from "./scoring";
-import type { CompanionType, Destination, ScoredDestination, StyleTag, UserTripCondition } from "./types";
+import type { CompanionType, Destination, FitStatus, ScoredDestination, StyleTag, UserTripCondition } from "./types";
 
 const cityMeta: Record<string, { name: string; country: string; image: string; alt: string; tags: string[] }> = {
   fukuoka_japan: {
@@ -44,6 +44,9 @@ const styleOptions: Array<{ value: StyleTag; label: string }> = [
   { value: "relaxed", label: "Relax" },
   { value: "photo", label: "Photo" },
   { value: "localExperience", label: "Local" },
+  { value: "nightlife", label: "Nightlife" },
+  { value: "familyFriendly", label: "Family" },
+  { value: "firstTimer", label: "First timer" },
 ];
 
 const companionLabels: Record<CompanionType, string> = {
@@ -52,12 +55,21 @@ const companionLabels: Record<CompanionType, string> = {
   friends: "Friends",
   family: "Family",
   parents: "Parents",
+  children: "With children",
 };
 
 const bucketLabel: Record<ScoredDestination["bucket"], string> = {
   good: "Good fit",
   borderline: "Borderline",
   difficult: "Difficult",
+};
+
+const statusLabel: Record<FitStatus, string> = {
+  good: "Good",
+  borderline: "Check",
+  difficult: "Hard",
+  unknown: "Missing",
+  no_limit: "No limit",
 };
 
 let destinations: Destination[] = sampleDestinations;
@@ -116,25 +128,6 @@ const conditionFromForm = (form: HTMLFormElement): UserTripCondition => {
   };
 };
 
-const reasonsFor = (item: ScoredDestination, condition: UserTripCondition): string[] => {
-  const reasons: string[] = [];
-  if (item.breakdown.feasibility >= 75) reasons.push("Likely to fit your budget from the selected departure airport.");
-  if (item.breakdown.durationFit >= 80) reasons.push(`Works for ${condition.nights} nights.`);
-  if (item.breakdown.styleFit >= 75) reasons.push("Matches your selected style.");
-  if (item.breakdown.companionFit >= 75) reasons.push(`Good for ${companionLabels[condition.companionType].toLowerCase()} travel.`);
-  if (item.breakdown.flightTimeFit >= 80) reasons.push("Flight time fits your tolerance.");
-  return reasons.length ? reasons : ["A reasonable destination candidate for this setup."];
-};
-
-const cautionsFor = (item: ScoredDestination, condition: UserTripCondition): string[] => {
-  const cautions: string[] = [];
-  if (item.breakdown.feasibility < 75) cautions.push("Prices may exceed your budget from this departure airport.");
-  if (item.breakdown.flightTimeFit < 75) cautions.push("Flight time may be longer than your tolerance.");
-  if (item.destination.seasons.cautionMonths.includes(condition.travelMonth)) cautions.push("Weather or peak-season risk may apply.");
-  if (item.destination.dataQuality.needsReview) cautions.push("Some data still needs review.");
-  return cautions.length ? cautions : ["No major caution in the current data."];
-};
-
 const metaFor = (destination: Destination): { name: string; country: string; image: string; alt: string; tags: string[] } => {
   const knownMeta = cityMeta[destination.cityId];
   if (knownMeta) return knownMeta;
@@ -148,12 +141,32 @@ const metaFor = (destination: Destination): { name: string; country: string; ima
   };
 };
 
+const renderList = (items: string[], emptyText: string): string => {
+  const safeItems = items.length ? items : [emptyText];
+  return `<ul>${safeItems.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+};
+
+const renderStatusPills = (item: ScoredDestination): string => {
+  return item.explanation.dimensions
+    .filter((dimension) => dimension.key !== "direct" || dimension.status !== "unknown")
+    .map(
+      (dimension) => `
+        <span class="fit-pill ${dimension.status}">
+          <b>${escapeHtml(dimension.label)}</b>
+          <em>${escapeHtml(statusLabel[dimension.status])}</em>
+        </span>
+      `,
+    )
+    .join("");
+};
+
 const renderCard = (item: ScoredDestination, condition: UserTripCondition): string => {
   const meta = metaFor(item.destination);
   const cost = item.estimatedCostRange ? formatRange(item.estimatedCostRange) : "Cost data missing for selected departure";
   const flightRange = getFlightCostRangeForOrigin(item.destination.costProfile, condition.departureCity);
   const flightTime = getFlightTimeHoursForOrigin(item.destination, condition.departureCity);
   const selected = selectedCompareIds.has(item.destination.cityId);
+  const explanation = item.explanation;
 
   return `
     <article class="destination-card ${item.bucket} ${selected ? "selected" : ""}">
@@ -162,7 +175,14 @@ const renderCard = (item: ScoredDestination, condition: UserTripCondition): stri
         <div class="card-head"><div><h3>${escapeHtml(meta.name)}</h3><p>${escapeHtml(meta.country)} · ${escapeHtml(item.destination.mainAirport)}</p></div><div class="score"><strong>${item.score}</strong><small>${stars(item.starRating)}</small></div></div>
         <div class="tag-row">${meta.tags.map((tag) => `<em>${escapeHtml(tag)}</em>`).join("")}</div>
         <div class="price-row"><span>Estimated total</span><strong>${cost}</strong><small>Flight ${formatRange(flightRange)} · ${formatHours(flightTime)}</small></div>
-        <div class="reason-row"><div><b>Why</b><ul>${reasonsFor(item, condition).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div><div><b>Watch</b><ul>${cautionsFor(item, condition).map((caution) => `<li>${escapeHtml(caution)}</li>`).join("")}</ul></div></div>
+        <div class="fit-grid">${renderStatusPills(item)}</div>
+        <div class="summary-box"><b>${escapeHtml(bucketLabel[item.bucket])}</b><p>${escapeHtml(explanation.summary)}</p></div>
+        <div class="reason-row three-columns">
+          <div><b>Good</b>${renderList(explanation.goodPoints, "No clear strength yet.")}</div>
+          <div><b>Check</b>${renderList(explanation.borderlinePoints, "No major trade-off.")}</div>
+          <div><b>Hard</b>${renderList(explanation.difficultPoints, "No hard blocker.")}</div>
+        </div>
+        ${explanation.blockingIssue ? `<p class="data-note">Data note: ${escapeHtml(explanation.blockingIssue)}</p>` : ""}
         <button type="button" class="compare-button" data-city-id="${escapeHtml(item.destination.cityId)}">${selected ? "Selected for compare" : "Add to compare"}</button>
       </div>
     </article>
@@ -194,6 +214,14 @@ const selectedCompareItems = (): ScoredDestination[] => {
     .filter((item): item is ScoredDestination => Boolean(item));
 };
 
+const mainTradeoff = (item: ScoredDestination): string => {
+  return item.explanation.difficultPoints[0] ?? item.explanation.borderlinePoints[0] ?? "No major trade-off";
+};
+
+const mainStrength = (item: ScoredDestination): string => {
+  return item.explanation.goodPoints[0] ?? item.explanation.summary;
+};
+
 const renderComparePanel = (): void => {
   const panel = document.querySelector<HTMLElement>("#compare-panel");
   if (!panel) return;
@@ -223,9 +251,8 @@ const renderComparePanel = (): void => {
           <td>${bucketLabel[item.bucket]}</td>
           <td>${formatRange(item.estimatedCostRange)}</td>
           <td>${formatHours(flightTime)}</td>
-          <td>${item.breakdown.styleFit}</td>
-          <td>${item.breakdown.flightTimeFit}</td>
-          <td>${item.cautions.length ? escapeHtml(item.cautions[0]) : "None"}</td>
+          <td>${mainStrength(item)}</td>
+          <td>${mainTradeoff(item)}</td>
           <td><button type="button" class="remove-compare" data-remove-city-id="${escapeHtml(item.destination.cityId)}">Remove</button></td>
         </tr>
       `;
@@ -244,7 +271,7 @@ const renderComparePanel = (): void => {
     ${
       selectedItems.length < 2
         ? `<div class="compare-empty"><p>Add at least 2 destinations to open the comparison table.</p></div>`
-        : `<div class="compare-table-wrap"><table class="compare-table"><thead><tr><th>Destination</th><th>Fit</th><th>Estimated total</th><th>Flight</th><th>Style</th><th>Flight fit</th><th>Main caution</th><th></th></tr></thead><tbody>${tableRows}</tbody></table></div>`
+        : `<div class="compare-table-wrap"><table class="compare-table"><thead><tr><th>Destination</th><th>Fit</th><th>Estimated total</th><th>Flight</th><th>Main strength</th><th>Main trade-off</th><th></th></tr></thead><tbody>${tableRows}</tbody></table></div>`
     }
   `;
 
@@ -267,6 +294,23 @@ const renderComparePanel = (): void => {
   });
 };
 
+const renderDecisionSummary = (results: ScoredDestination[]): string => {
+  const good = results.filter((item) => item.bucket === "good").length;
+  const borderline = results.filter((item) => item.bucket === "borderline").length;
+  const difficult = results.filter((item) => item.bucket === "difficult").length;
+  const topGood = results.find((item) => item.bucket === "good");
+  const topBorderline = results.find((item) => item.bucket === "borderline");
+  const topDifficult = results.find((item) => item.bucket === "difficult");
+
+  return `
+    <div class="decision-summary">
+      <div><span>Good</span><strong>${good}</strong><p>${topGood ? escapeHtml(topGood.explanation.summary) : "No clear good-fit destination yet."}</p></div>
+      <div><span>Borderline</span><strong>${borderline}</strong><p>${topBorderline ? escapeHtml(topBorderline.explanation.summary) : "No borderline destinations in this result."}</p></div>
+      <div><span>Difficult</span><strong>${difficult}</strong><p>${topDifficult ? escapeHtml(topDifficult.explanation.summary) : "No hard blockers among visible destinations."}</p></div>
+    </div>
+  `;
+};
+
 const renderResults = (condition: UserTripCondition): void => {
   lastCondition = condition;
   lastResults = scoreDestinations(destinations, condition);
@@ -275,7 +319,8 @@ const renderResults = (condition: UserTripCondition): void => {
 
   target.className = "results";
   target.innerHTML = `
-    <div class="results-head"><div><p class="kicker">Destination results</p><h2>Your best options</h2><p>${escapeHtml(condition.departureCity)} · Month ${condition.travelMonth} · ${condition.nights} nights · ${formatKrw(condition.budgetAmount)} · ${escapeHtml(dataSourceLabel)}</p></div></div>
+    <div class="results-head"><div><p class="kicker">Destination results</p><h2>Not just recommendations — reasons.</h2><p>${escapeHtml(condition.departureCity)} · Month ${condition.travelMonth} · ${condition.nights} nights · ${formatKrw(condition.budgetAmount)} · ${escapeHtml(dataSourceLabel)}</p></div></div>
+    ${renderDecisionSummary(lastResults)}
     <div class="bucket-tabs"><span>Good ${lastResults.filter((item) => item.bucket === "good").length}</span><span>Borderline ${lastResults.filter((item) => item.bucket === "borderline").length}</span><span>Difficult ${lastResults.filter((item) => item.bucket === "difficult").length}</span></div>
     <div class="cards">${lastResults.slice(0, 24).map((item) => renderCard(item, condition)).join("")}</div>
   `;
@@ -290,10 +335,10 @@ const renderShell = (): void => {
 
   app.innerHTML = `
     <main>
-      <nav class="nav"><strong>Traveling Idea</strong><span>Search</span><span>Compare</span><span>Trips</span></nav>
+      <nav class="nav"><strong>Traveling Idea</strong><span>Search</span><span>Compare</span><span>Reasons</span></nav>
       <section class="hero">
-        <div><p class="kicker">Destination decision platform</p><h1>Find where to go before you book.</h1><p class="lead">Compare destinations by budget, travel month, duration, companions, style, and flight time.</p></div>
-        <div class="hero-panel"><strong>Travel smarter</strong><p>Start from your real constraints, then compare destination trade-offs before booking.</p><small id="data-source">Loading destination data…</small></div>
+        <div><p class="kicker">Destination decision platform</p><h1>Find where to go before you book.</h1><p class="lead">Compare destinations by budget, travel month, duration, companions, style, flight time, and the reasons why some options are not a fit.</p></div>
+        <div class="hero-panel"><strong>Decision-first MVP</strong><p>Every result is split into what works, what is borderline, and what makes the trip difficult.</p><small id="data-source">Loading destination data…</small></div>
       </section>
       <section class="search-panel" id="planner">
         <form id="trip-form" class="search-form">
@@ -303,14 +348,14 @@ const renderShell = (): void => {
           <label><span>Nights</span><input name="nights" type="number" min="0" placeholder="3" required /></label>
           <label><span>Budget</span><input name="budgetAmount" type="number" min="0" placeholder="800000" required /></label>
           <label><span>Companion</span><select name="companionType" required><option value="" selected disabled>Select type</option>${Object.entries(companionLabels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label>
-          <label><span>Flight time</span><select name="flightTimeToleranceHours" required><option value="" selected disabled>Select tolerance</option><option value="3">Up to 3h</option><option value="6">Up to 6h</option><option value="10">Up to 10h</option><option value="any">Any</option></select></label>
+          <label><span>Flight time</span><select name="flightTimeToleranceHours" required><option value="" selected disabled>Select tolerance</option><option value="3">Up to 3h</option><option value="5">Up to 5h</option><option value="8">Up to 8h</option><option value="12">Up to 12h</option><option value="any">Any</option></select></label>
           <fieldset>${styleOptions.map((option) => `<label><input type="checkbox" name="styleTags" value="${option.value}" /><span>${option.label}</span></label>`).join("")}</fieldset>
           <input name="mustHaveConditions" placeholder="Must-have: beach, shopping, short flight" />
           <input name="avoidConditions" placeholder="Avoid: rainy season, long flights" />
-          <button type="submit">Search destinations</button>
+          <button type="submit">Judge my destinations</button>
         </form>
       </section>
-      <section id="results" class="empty"><p class="kicker">No search yet</p><h2>Destination cards will appear here.</h2><p>Submit your trip conditions to see recommendation reasons and route-aware estimates.</p></section>
+      <section id="results" class="empty"><p class="kicker">No search yet</p><h2>Destination verdicts will appear here.</h2><p>Submit your trip conditions to see what is good, what is borderline, and what makes a destination difficult.</p></section>
       <section id="compare-panel" class="compare-panel"></section>
     </main>
   `;
@@ -326,8 +371,8 @@ const loadPreviewDestinations = async (): Promise<void> => {
   try {
     const loadedDestinations = await loadDestinationsFromGoogleSheets({ accessMode: "public" });
     if (loadedDestinations.length > 0) {
-      destinations = loadedDestinations;
-      dataSourceLabel = "Google Sheets";
+      destinations = await applyV2SheetOverrides(loadedDestinations, { accessMode: "public" });
+      dataSourceLabel = "Google Sheets + V2 decision data";
       return;
     }
   } catch (error) {
