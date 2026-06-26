@@ -7,11 +7,12 @@ export type CompanionType =
   | "couple"
   | "friends"
   | "family"
-  | "parents";
+  | "parents"
+  | "children";
 
 export type BucketType = "good" | "borderline" | "difficult";
 
-export type StyleTag =
+export type CoreStyleTag =
   | "budget"
   | "food"
   | "shopping"
@@ -21,6 +22,10 @@ export type StyleTag =
   | "relaxed"
   | "photo"
   | "localExperience";
+
+export type StyleTag = CoreStyleTag | "nightlife" | "familyFriendly" | "firstTimer";
+
+export type FitStatus = "good" | "borderline" | "difficult" | "unknown" | "no_limit";
 
 export type UserTripCondition = {
   departureCity: string;
@@ -92,9 +97,9 @@ export type RouteFlightProfile = {
   lastUpdated?: string;
 };
 
-export type StyleScores = Record<StyleTag, number>;
+export type StyleScores = Record<CoreStyleTag, number> & Partial<Record<Exclude<StyleTag, CoreStyleTag>, number>>;
 
-export type CompanionScores = Record<CompanionType, number>;
+export type CompanionScores = Record<Exclude<CompanionType, "children">, number> & Partial<Record<"children", number>>;
 
 export type DestinationImageUrls = {
   card?: string;
@@ -163,6 +168,28 @@ export type DestinationScoreBreakdown = {
   cautionPenalty: number;
 };
 
+export type FitDimensionKey = "budget" | "flight" | "duration" | "season" | "style" | "companion" | "direct";
+
+export type FitDimension = {
+  key: FitDimensionKey;
+  label: string;
+  status: FitStatus;
+  goodText?: string;
+  borderlineText?: string;
+  difficultText?: string;
+  valueText?: string;
+};
+
+export type ResultExplanation = {
+  goodPoints: string[];
+  borderlinePoints: string[];
+  difficultPoints: string[];
+  dimensions: FitDimension[];
+  summary: string;
+  confidence: "high" | "medium" | "low";
+  blockingIssue: string;
+};
+
 export type ScoredDestination = {
   destination: Destination;
   score: number;
@@ -172,4 +199,5 @@ export type ScoredDestination = {
   cautions: string[];
   estimatedCostRange: CostRange | null;
   breakdown: DestinationScoreBreakdown;
+  explanation: ResultExplanation;
 };
