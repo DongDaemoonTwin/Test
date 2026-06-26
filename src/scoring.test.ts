@@ -8,7 +8,7 @@ import {
   scoreDestination,
   scoreDestinations,
 } from "./scoring";
-import type { UserTripCondition } from "./types";
+import type { Destination, UserTripCondition } from "./types";
 
 const baseCondition: UserTripCondition = {
   departureCity: "ICN",
@@ -43,6 +43,36 @@ describe("scoring", () => {
     expect(getFlightCostRangeForOrigin(fukuoka.costProfile, "NRT")).toEqual([180000, 350000]);
     expect(icnCost).not.toEqual(nrtCost);
     expect(nrtCost[0]).toBeLessThan(icnCost[0]);
+  });
+
+  it("converts mixed route and stay currencies into the user's budget currency", () => {
+    const fukuoka = getSampleDestination("fukuoka_japan");
+    const destination: Destination = {
+      ...fukuoka,
+      costProfile: {
+        flightCostRangeByOrigin: {
+          NRT: [20000, 30000],
+        },
+        flightCostCurrencyByOrigin: {
+          NRT: "JPY",
+        },
+        hotelPerNightRange: [100, 150],
+        hotelPerNightCurrency: "USD",
+        dailyLocalCostRange: [50, 70],
+        dailyLocalCostCurrency: "USD",
+        currency: "KRW",
+      },
+    };
+
+    const cost = estimateTotalCostRange(destination, {
+      ...baseCondition,
+      departureCity: "NRT",
+      durationDays: 3,
+      nights: 2,
+      budgetCurrency: "KRW",
+    });
+
+    expect(cost).toEqual([670000, 984000]);
   });
 
   it("reflects flight time tolerance in the score breakdown", () => {
