@@ -51,8 +51,11 @@ export type CostProfile = {
   flightCostRangeFromNRT?: CostRange;
   flightCostRangeFromKIX?: CostRange;
   flightCostRangeByOrigin?: Record<string, CostRange>;
+  flightCostCurrencyByOrigin?: Record<string, BudgetCurrency>;
   hotelPerNightRange?: CostRange;
+  hotelPerNightCurrency?: BudgetCurrency;
   dailyLocalCostRange?: CostRange;
+  dailyLocalCostCurrency?: BudgetCurrency;
   currency?: BudgetCurrency;
   note?: string;
   pricingSource?: "manual_seed" | "amadeus_live" | "amadeus_cached" | "mixed" | string;
@@ -69,7 +72,24 @@ export type FlightTimeProfile = {
   flightTimeHoursFromNRT?: number;
   flightTimeHoursFromKIX?: number;
   flightTimeHoursByOrigin?: Record<string, number>;
+  directFlightAvailableByOrigin?: Record<string, boolean>;
+  transferAirportsByOrigin?: Record<string, string[]>;
   note?: string;
+};
+
+export type RouteFlightProfile = {
+  departureAirport: string;
+  arrivalAirport: string;
+  fareCurrency?: BudgetCurrency;
+  flightCostRange?: CostRange;
+  flightDurationHours?: number;
+  isDirectAvailable?: boolean;
+  typicalTransferAirports?: string[];
+  routeConfidence?: string;
+  dataStatus?: string;
+  needsReview?: boolean;
+  sourceNote?: string;
+  lastUpdated?: string;
 };
 
 export type StyleScores = Record<StyleTag, number>;
@@ -110,6 +130,14 @@ export type Destination = {
   costProfile: CostProfile;
 
   flightTimeProfile?: FlightTimeProfile;
+
+  routeFlightProfilesByOrigin?: Record<string, RouteFlightProfile>;
+
+  mvp?: {
+    visible: boolean;
+    priority: number | null;
+    targetDepartureMarket: string;
+  };
 
   styleScores: StyleScores;
 
