@@ -6,6 +6,7 @@ import type {
   Destination,
   FlightTimeProfile,
   MonthlyClimate,
+  RouteFlightProfile,
   StyleScores,
 } from "./types";
 
@@ -21,6 +22,7 @@ export const GOOGLE_SHEET_TABS = {
   costProfiles: "Cost_Profiles",
   styleScores: "Style_Scores",
   companionScores: "Companion_Scores",
+  routeFlightProfiles: "Route_Flight_Profiles",
 } as const;
 
 type SheetRecord = Record<string, string>;
@@ -29,6 +31,7 @@ type GoogleSheetAccessMode = "auto" | "public" | "service_account";
 type LoadGoogleSheetOptions = {
   sheetId?: string;
   accessMode?: GoogleSheetAccessMode;
+  includeHiddenDestinations?: boolean;
 };
 
 type ServiceAccountToken = {
@@ -45,6 +48,7 @@ let cachedServiceAccountToken: ServiceAccountToken | null = null;
 const GOOGLE_SHEETS_READONLY_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const originCodes = ["ICN", "GMP", "NRT", "KIX"];
+const budgetCurrencies: BudgetCurrency[] = ["KRW", "JPY", "USD"];
 
 const env = (key: string): string => {
   const runtimeProcess = (globalThis as typeof globalThis & { process?: RuntimeProcess }).process;
@@ -59,8 +63,9 @@ const text = (value: unknown): string => {
 const numberText = (value: unknown): string =>
   text(value)
     .replace(/,/g, "")
+    .replace(/[₩¥$]/g, "")
     .replace(/원/g, "")
-    .replace(/krw/gi, "")
+    .replace(/krw|jpy|usd/gi, "")
     .trim();
 
 const numberValue = (value: unknown, fallback: number | null = null): number | null => {
@@ -71,6 +76,18 @@ const numberValue = (value: unknown, fallback: number | null = null): number | n
 const booleanValue = (value: unknown): boolean => {
   const normalized = text(value).toLowerCase();
   return normalized === "true" || normalized === "yes" || normalized === "y" || normalized === "1";
+};
+
+const optionalBooleanValue = (value: unknown): boolean | undefined => {
+  const normalized = text(value).toLowerCase();
+  if (!normalized) return undefined;
+  return booleanValue(normalized);
+};
+
+const currencyValue = (value: unknown, fallback?: BudgetCurrency): BudgetCurrency | undefined => {
+  const normalized = text(value).toUpperCase();
+  if (normalized === "KRW" || normalized === "JPY" || normalized === "USD") return normalized;
+  return fallback;
 };
 
 const parseList = (value: unknown, separator: RegExp | string = /[|,]/): string[] =>
@@ -451,24 +468,100 @@ const primaryAirportForCity = (airportRows: SheetRecord[] | undefined, fallbackA
   return text(primaryAirport.airport_code) || fallbackAirport;
 };
 
-const currencyFromRow = (row: SheetRecord | undefined): BudgetCurrency => {
-  const currency = pickText(row, ["currency", "currency_code", "budget_currency"]).toUpperCase();
-  if (currency === "JPY" || currency === "USD") return currency;
-  return "KRW";
-};
-
-const flightRangeForOrigin = (costRow: SheetRecord | undefined, origin: string): CostRange | undefined => {
+const flightRangeForOrigin = (
+  costRow: SheetRecord | undefined,
+  origin: string,
+): { range: CostRange; currency: BudgetCurrency } | undefined => {
   const lower = origin.toLowerCase();
-  return pickRange(
-    costRow,
-    [`flight_cost_from_${lower}_min_krw`, `${lower}_flight_cost_min_krw`, `${lower}_flight_min_krw`, ...(origin === "ICN" ? ["flight_cost_min_krw"] : [])],
-    [`flight_cost_from_${lower}_max_krw`, `${lower}_flight_cost_max_krw`, `${lower}_flight_max_krw`, ...(origin === "ICN" ? ["flight_cost_max_krw"] : [])],
-    [`flight_cost_from_${lower}_avg_krw`, `${lower}_flight_cost_avg_krw`, `${lower}_flight_avg_krw`, ...(origin === "ICN" ? ["flight_cost_avg_krw", "flight_avg_krw"] : [])],
-  );
+  const upper = origin.toUpperCase();
+
+  for (const currency of budgetCurrencies) {
+    const range = pickRange(
+      costRow,
+      [
+        `flight_cost_low_from_${upper}_${currency}`,
+        `flight_cost_from_${upper}_low_${currency}`,
+        `flight_cost_from_${lower}_min_${currency.toLowerCase()}`,
+        `${lower}_flight_cost_min_${currency.toLowerCase()}`,
+        `${lower}_flight_min_${currency.toLowerCase()}`,
+        ...(origin === "ICN" && currency === "KRW" ? ["flight_cost_min_krw"] : []),
+      ],
+      [
+        `flight_cost_high_from_${upper}_${currency}`,
+        `flight_cost_from_${upper}_high_${currency}`,
+        `flight_cost_from_${lower}_max_${currency.toLowerCase()}`,
+        `${lower}_flight_cost_max_${currency.toLowerCase()}`,
+        `${lower}_flight_max_${currency.toLowerCase()}`,
+        ...(origin === "ICN" && currency === "KRW" ? ["flight_cost_max_krw"] : []),
+      ],
+      [
+        `flight_cost_avg_from_${upper}_${currency}`,
+        `flight_cost_from_${upper}_avg_${currency}`,
+        `flight_cost_from_${lower}_avg_${currency.toLowerCase()}`,
+        `${lower}_flight_cost_avg_${currency.toLowerCase()}`,
+        `${lower}_flight_avg_${currency.toLowerCase()}`,
+        ...(origin === "ICN" && currency === "KRW" ? ["flight_cost_avg_krw", "flight_avg_krw"] : []),
+      ],
+    );
+
+    if (range) return { range, currency };
+  }
+
+  return undefined;
 };
 
-const buildCostProfile = (costRow: SheetRecord | undefined): CostProfile => {
-  if (!costRow) {
+const buildRouteFlightProfile = (routeRow: SheetRecord): RouteFlightProfile | null => {
+  const departureAirport = text(routeRow.departure_airport).toUpperCase();
+  const arrivalAirport = text(routeRow.arrival_airport).toUpperCase();
+  if (!departureAirport || !arrivalAirport) return null;
+
+  const flightCostRange = pickRange(routeRow, ["flight_cost_low", "fare_low"], ["flight_cost_high", "fare_high"]);
+  const flightDurationHours = pickNumber(routeRow, ["flight_duration_hours", "flight_time_hours", "duration_hours"]);
+
+  return {
+    departureAirport,
+    arrivalAirport,
+    fareCurrency: currencyValue(routeRow.fare_currency),
+    flightCostRange,
+    flightDurationHours: flightDurationHours ?? undefined,
+    isDirectAvailable: optionalBooleanValue(routeRow.is_direct_available),
+    typicalTransferAirports: parseList(routeRow.typical_transfer_airports),
+    routeConfidence: text(routeRow.route_confidence) || undefined,
+    dataStatus: text(routeRow.data_status) || undefined,
+    needsReview: optionalBooleanValue(routeRow.needs_review),
+    sourceNote: text(routeRow.source_note) || undefined,
+    lastUpdated: text(routeRow.last_updated) || undefined,
+  };
+};
+
+const buildRouteFlightProfilesByOrigin = (routeRows: SheetRecord[] | undefined): Record<string, RouteFlightProfile> => {
+  const profiles: Record<string, RouteFlightProfile> = {};
+  for (const routeRow of routeRows ?? []) {
+    const profile = buildRouteFlightProfile(routeRow);
+    if (!profile) continue;
+    profiles[profile.departureAirport] = profile;
+  }
+  return profiles;
+};
+
+const rangeFromUsdOrKrw = (
+  row: SheetRecord | undefined,
+  usdMinKeys: string[],
+  usdMaxKeys: string[],
+  krwMinKeys: string[],
+  krwMaxKeys: string[],
+): { range?: CostRange; currency?: BudgetCurrency } => {
+  const krwRange = pickRange(row, krwMinKeys, krwMaxKeys);
+  if (krwRange) return { range: krwRange, currency: "KRW" };
+
+  const usdRange = pickRange(row, usdMinKeys, usdMaxKeys);
+  if (usdRange) return { range: usdRange, currency: "USD" };
+
+  return {};
+};
+
+const buildCostProfile = (costRow: SheetRecord | undefined, routeRows: SheetRecord[] | undefined): CostProfile => {
+  if (!costRow && (!routeRows || routeRows.length === 0)) {
     return {
       currency: "KRW",
       note: "Cost_Profiles row is missing, so cost feasibility is calculated as a neutral fallback.",
@@ -476,38 +569,54 @@ const buildCostProfile = (costRow: SheetRecord | undefined): CostProfile => {
   }
 
   const flightCostRangeByOrigin: Record<string, CostRange> = {};
+  const flightCostCurrencyByOrigin: Record<string, BudgetCurrency> = {};
+
   for (const origin of originCodes) {
-    const range = flightRangeForOrigin(costRow, origin);
-    if (range) flightCostRangeByOrigin[origin] = range;
+    const flight = flightRangeForOrigin(costRow, origin);
+    if (flight) {
+      flightCostRangeByOrigin[origin] = flight.range;
+      flightCostCurrencyByOrigin[origin] = flight.currency;
+    }
   }
 
-  const hotelPerNightRange = pickRange(
+  const routeProfilesByOrigin = buildRouteFlightProfilesByOrigin(routeRows);
+  for (const [origin, profile] of Object.entries(routeProfilesByOrigin)) {
+    if (profile.flightCostRange) {
+      flightCostRangeByOrigin[origin] = profile.flightCostRange;
+      flightCostCurrencyByOrigin[origin] = profile.fareCurrency ?? flightCostCurrencyByOrigin[origin] ?? "KRW";
+    }
+  }
+
+  const hotel = rangeFromUsdOrKrw(
     costRow,
+    ["hotel_per_night_low_USD", "hotel_per_night_min_usd", "hotel_min_usd"],
+    ["hotel_per_night_high_USD", "hotel_per_night_max_usd", "hotel_max_usd"],
     ["hotel_per_night_min_krw", "hotel_min_krw", "accommodation_min_krw", "lodging_min_krw"],
     ["hotel_per_night_max_krw", "hotel_max_krw", "accommodation_max_krw", "lodging_max_krw"],
-    ["hotel_per_night_avg_krw", "hotel_avg_krw", "accommodation_avg_krw", "lodging_avg_krw"],
   );
 
-  const directDailyRange = pickRange(
+  const daily = rangeFromUsdOrKrw(
     costRow,
+    ["daily_local_cost_low_USD", "daily_local_cost_min_usd", "daily_cost_min_usd"],
+    ["daily_local_cost_high_USD", "daily_local_cost_max_usd", "daily_cost_max_usd"],
     ["daily_local_cost_min_krw", "daily_cost_min_krw", "daily_stay_cost_min_krw", "daily_stay_min_krw"],
     ["daily_local_cost_max_krw", "daily_cost_max_krw", "daily_stay_cost_max_krw", "daily_stay_max_krw"],
-    ["daily_local_cost_avg_krw", "daily_cost_avg_krw", "daily_stay_cost_avg_krw", "daily_stay_avg_krw"],
   );
 
-  const transportRange = pickRange(
+  const transport = rangeFromUsdOrKrw(
     costRow,
+    ["local_transport_low_USD", "local_transport_min_usd", "transport_min_usd"],
+    ["local_transport_high_USD", "local_transport_max_usd", "transport_max_usd"],
     ["local_transport_min_krw", "transport_min_krw"],
     ["local_transport_max_krw", "transport_max_krw"],
-    ["local_transport_avg_krw", "transport_avg_krw"],
   );
 
   const dailyLocalCostRange =
-    directDailyRange && transportRange
-      ? ([directDailyRange[0] + transportRange[0], directDailyRange[1] + transportRange[1]] as CostRange)
-      : directDailyRange;
+    daily.range && transport.range && daily.currency === transport.currency
+      ? ([daily.range[0] + transport.range[0], daily.range[1] + transport.range[1]] as CostRange)
+      : daily.range;
 
-  const note = pickText(costRow, ["budget_note", "cost_note", "note", "source_note"]);
+  const note = pickText(costRow, ["recommended_budget_note_ko", "budget_note", "cost_note", "note", "source_note"]);
   const pricingSource = pickText(costRow, ["pricing_source", "data_status", "source"]);
   const lastFetchedAt = pickText(costRow, ["last_fetched_at", "last_updated", "updated_at"]);
 
@@ -517,10 +626,13 @@ const buildCostProfile = (costRow: SheetRecord | undefined): CostProfile => {
     flightCostRangeFromNRT: flightCostRangeByOrigin.NRT,
     flightCostRangeFromKIX: flightCostRangeByOrigin.KIX,
     flightCostRangeByOrigin,
-    hotelPerNightRange,
+    flightCostCurrencyByOrigin,
+    hotelPerNightRange: hotel.range,
+    hotelPerNightCurrency: hotel.currency,
     dailyLocalCostRange,
-    currency: currencyFromRow(costRow),
-    note: note || "Cost profile loaded from Google Sheets Cost_Profiles.",
+    dailyLocalCostCurrency: daily.currency,
+    currency: "KRW",
+    note: note || "Cost profile loaded from Google Sheets Cost_Profiles and Route_Flight_Profiles.",
     pricingSource: pricingSource || "google_sheets",
     lastFetchedAt: lastFetchedAt || undefined,
   };
@@ -538,14 +650,40 @@ const flightTimeForOrigin = (rows: Array<SheetRecord | undefined>, origin: strin
   return value ?? undefined;
 };
 
-const buildFlightTimeProfile = (...rows: Array<SheetRecord | undefined>): FlightTimeProfile | undefined => {
+const buildFlightTimeProfile = (
+  routeRows: SheetRecord[] | undefined,
+  ...rows: Array<SheetRecord | undefined>
+): FlightTimeProfile | undefined => {
   const flightTimeHoursByOrigin: Record<string, number> = {};
+  const directFlightAvailableByOrigin: Record<string, boolean> = {};
+  const transferAirportsByOrigin: Record<string, string[]> = {};
+  const routeProfilesByOrigin = buildRouteFlightProfilesByOrigin(routeRows);
+
+  for (const [origin, profile] of Object.entries(routeProfilesByOrigin)) {
+    if (typeof profile.flightDurationHours === "number" && Number.isFinite(profile.flightDurationHours)) {
+      flightTimeHoursByOrigin[origin] = profile.flightDurationHours;
+    }
+    if (typeof profile.isDirectAvailable === "boolean") {
+      directFlightAvailableByOrigin[origin] = profile.isDirectAvailable;
+    }
+    if (profile.typicalTransferAirports?.length) {
+      transferAirportsByOrigin[origin] = profile.typicalTransferAirports;
+    }
+  }
+
   for (const origin of originCodes) {
+    if (flightTimeHoursByOrigin[origin] !== undefined) continue;
     const hours = flightTimeForOrigin(rows, origin);
     if (typeof hours === "number" && Number.isFinite(hours)) flightTimeHoursByOrigin[origin] = hours;
   }
 
-  if (Object.keys(flightTimeHoursByOrigin).length === 0) return undefined;
+  if (
+    Object.keys(flightTimeHoursByOrigin).length === 0 &&
+    Object.keys(directFlightAvailableByOrigin).length === 0 &&
+    Object.keys(transferAirportsByOrigin).length === 0
+  ) {
+    return undefined;
+  }
 
   return {
     flightTimeHoursFromICN: flightTimeHoursByOrigin.ICN,
@@ -553,6 +691,8 @@ const buildFlightTimeProfile = (...rows: Array<SheetRecord | undefined>): Flight
     flightTimeHoursFromNRT: flightTimeHoursByOrigin.NRT,
     flightTimeHoursFromKIX: flightTimeHoursByOrigin.KIX,
     flightTimeHoursByOrigin,
+    directFlightAvailableByOrigin,
+    transferAirportsByOrigin,
     note: pickTextFromRows(rows, ["flight_time_note", "route_note"]),
   };
 };
@@ -568,6 +708,7 @@ const toDestination = (
     costRow?: SheetRecord;
     styleRow?: SheetRecord;
     companionRow?: SheetRecord;
+    routeRows?: SheetRecord[];
   },
 ): Destination => {
   const cityId = text(baseRow.city_id);
@@ -580,6 +721,7 @@ const toDestination = (
   const derivedStyleScores = deriveStyleScores(shortIntroKo, keywordsKo.join(" "), landmarks.join(" "));
   const styleScores = buildStyleScores(relatedRows.styleRow, derivedStyleScores);
   const derivedCompanionScores = deriveCompanionScores(styleScores, shortIntroKo, keywordsKo.join(" "), landmarks.join(" "));
+  const routeFlightProfilesByOrigin = buildRouteFlightProfilesByOrigin(relatedRows.routeRows);
 
   return {
     cityId,
@@ -604,8 +746,14 @@ const toDestination = (
     },
 
     climateByMonth: buildClimateByMonth(relatedRows.climateRow),
-    costProfile: buildCostProfile(relatedRows.costRow),
-    flightTimeProfile: buildFlightTimeProfile(baseRow, relatedRows.introRow, relatedRows.costRow),
+    costProfile: buildCostProfile(relatedRows.costRow, relatedRows.routeRows),
+    flightTimeProfile: buildFlightTimeProfile(relatedRows.routeRows, baseRow, relatedRows.introRow, relatedRows.costRow),
+    routeFlightProfilesByOrigin,
+    mvp: {
+      visible: !text(baseRow.mvp_visible) || booleanValue(baseRow.mvp_visible),
+      priority: numberValue(baseRow.mvp_priority),
+      targetDepartureMarket: text(baseRow.target_departure_market),
+    },
     styleScores,
     companionScores: buildCompanionScores(relatedRows.companionRow, derivedCompanionScores),
     imageUrls: {
@@ -625,7 +773,8 @@ const toDestination = (
         booleanValue(relatedRows.climateRow?.needs_review) ||
         booleanValue(relatedRows.costRow?.needs_review) ||
         booleanValue(relatedRows.styleRow?.needs_review) ||
-        booleanValue(relatedRows.companionRow?.needs_review),
+        booleanValue(relatedRows.companionRow?.needs_review) ||
+        (relatedRows.routeRows ?? []).some((routeRow) => booleanValue(routeRow.needs_review)),
     },
   };
 };
@@ -643,6 +792,7 @@ export const loadDestinationsFromGoogleSheets = async (
     costRows,
     styleRows,
     companionRows,
+    routeRows,
   ] = await Promise.all([
     fetchGoogleSheetTab(GOOGLE_SHEET_TABS.citiesBase, options),
     fetchGoogleSheetTab(GOOGLE_SHEET_TABS.airports, options),
@@ -653,6 +803,7 @@ export const loadDestinationsFromGoogleSheets = async (
     fetchOptionalGoogleSheetTab(GOOGLE_SHEET_TABS.costProfiles, options),
     fetchOptionalGoogleSheetTab(GOOGLE_SHEET_TABS.styleScores, options),
     fetchOptionalGoogleSheetTab(GOOGLE_SHEET_TABS.companionScores, options),
+    fetchOptionalGoogleSheetTab(GOOGLE_SHEET_TABS.routeFlightProfiles, options),
   ]);
 
   const airportsByCityId = groupByCityId(airportRows);
@@ -663,9 +814,11 @@ export const loadDestinationsFromGoogleSheets = async (
   const costByCityId = indexByCityId(costRows);
   const styleByCityId = indexByCityId(styleRows);
   const companionByCityId = indexByCityId(companionRows);
+  const routeByCityId = groupByCityId(routeRows);
 
   return baseRows
-    .filter((baseRow) => text(baseRow.city_id))
+    .filter((baseRow) => text(baseRow.city_id) && text(baseRow.city_name) && text(baseRow.country))
+    .filter((baseRow) => options.includeHiddenDestinations || !text(baseRow.mvp_visible) || booleanValue(baseRow.mvp_visible))
     .map((baseRow) =>
       toDestination(baseRow, {
         airportRows: airportsByCityId.get(text(baseRow.city_id)),
@@ -676,6 +829,7 @@ export const loadDestinationsFromGoogleSheets = async (
         costRow: costByCityId.get(text(baseRow.city_id)),
         styleRow: styleByCityId.get(text(baseRow.city_id)),
         companionRow: companionByCityId.get(text(baseRow.city_id)),
+        routeRows: routeByCityId.get(text(baseRow.city_id)),
       }),
     );
 };
