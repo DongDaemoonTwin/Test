@@ -1,0 +1,7 @@
+.compare-panel:has(.compare-empty) {
+  display: none;
+}
+
+.results + .compare-panel:has(.compare-empty) {
+  margin-top: 0;
+}
